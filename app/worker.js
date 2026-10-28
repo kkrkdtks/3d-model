@@ -15,6 +15,8 @@ import { adjacency, segment, uniqueEdges, valleyCurvature, vertexNormals } from 
 import { stripWebPProfile } from './webp.js';
 
 const ready = Promise.all([MeshoptDecoder.ready, MeshoptEncoder.ready, MeshoptSimplifier.ready]);
+// tell the page the worker really runs (some sandboxes load it but block WebAssembly)
+ready.then(() => self.postMessage({ hello: true }), (err) => self.postMessage({ hello: false, error: String(err?.message || err) }));
 let io = null;
 const state = {};
 

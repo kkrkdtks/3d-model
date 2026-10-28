@@ -43,7 +43,7 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { height: 100%; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--font); -webkit-font-smoothing: antialiased; word-break: keep-all; overflow-wrap: break-word; }
 button, input, select { font: inherit; color: inherit; }
 h1, h2, h3 { text-wrap: balance; margin: 0; }
 .mono { font-family: var(--mono); font-size: 0.92em; letter-spacing: 0.01em; }
@@ -87,6 +87,12 @@ h1, h2, h3 { text-wrap: balance; margin: 0; }
 .drop-card { max-width: 440px; text-align: center; background: var(--surface); border: 1.5px dashed var(--line-strong); border-radius: 16px; padding: 32px 28px; box-shadow: var(--shadow); display: grid; gap: 12px; justify-items: center; }
 .drop-card h1 { font-size: 19px; letter-spacing: -0.01em; }
 .drop-card p { margin: 0; color: var(--muted); }
+.drop-card.blocked { border-style: solid; border-color: var(--warn); max-width: 480px; }
+.drop-card .steps { margin: 4px 0 0; padding-left: 1.4em; text-align: left; display: grid; gap: 6px; color: var(--ink); }
+.drop-card .detail { font-size: 12px; color: var(--faint); word-break: break-all; }
+.drop-icon.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.drop-icon.warn::before { content: "!"; inset: 0; border: 0; border-radius: 0; display: grid; place-items: center; font-size: 28px; font-weight: 700; color: var(--warn); }
+.drop-icon.warn::after { display: none; }
 .drop-icon { width: 54px; height: 54px; border-radius: 12px; background: var(--accent-soft); position: relative; }
 .drop-icon::before { content: ""; position: absolute; inset: 14px 12px 18px; border: 2.5px solid var(--accent); border-radius: 4px 4px 8px 8px; border-top-width: 6px; }
 .drop-icon::after { content: ""; position: absolute; left: 14px; right: 14px; bottom: 12px; height: 4px; border-radius: 2px; background: var(--accent); opacity: 0.6; }

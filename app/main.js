@@ -61,12 +61,62 @@ const S = {
 const activeGroup = () => S.groups.find((g) => g.key === S.active) || null;
 const groupOfPart = (i) => S.groups.find((g) => g.parts.includes(i)) || null;
 
+// ---------- when the program cannot run here ----------
+
+// Opened inside another page (e.g. the file preview in the Claude app) instead of by double-click.
+const embedded = (() => { try { return window.self !== window.top; } catch { return true; } })();
+// Why the program cannot run here ('worker' | 'webgl'), shown on screen instead of failing silently.
+const blocked = { reason: null, detail: '' };
+
+const BLOCKED_TEXT = {
+  worker: {
+    title: '이 창에서는 프로그램이 실행되지 않아요',
+    why: () => (embedded
+      ? 'Claude 앱 미리보기처럼 다른 화면 안에 열린 창에서는 보안 때문에 막혀요.'
+      : '이 브라우저에서 백그라운드 처리가 막혀 있어요.'),
+    steps: () => (embedded
+      ? ['이 파일을 내려받으세요. 미리보기 창이라면 오른쪽 위의 ⤓ (다운로드) 버튼을 누르면 돼요.', '내려받은 파일을 더블클릭하면 크롬이나 엣지에서 열려요.']
+      : ['크롬이나 엣지 최신 버전으로 이 파일을 열어 보세요.', '그래도 안 되면 회사 보안 설정 때문일 수 있어요. 다른 PC에서 열어 보세요.']),
+  },
+  webgl: {
+    title: '이 브라우저에서는 3D 화면을 켤 수 없어요',
+    why: () => '그래픽 기능(WebGL)을 쓸 수 없는 상태예요.',
+    steps: () => ['크롬이나 엣지 최신 버전으로 이 파일을 열어 보세요.', '그래도 안 되면 브라우저 설정 → 시스템에서 ‘그래픽 가속 사용’을 켜고 브라우저를 다시 시작하세요.'],
+  },
+};
+
+function block(reason, detail = '') {
+  if (blocked.reason) return;
+  Object.assign(blocked, { reason, detail: String(detail || '') });
+  const t = BLOCKED_TEXT[reason];
+  const card = $('#drop .drop-card');
+  card.classList.add('blocked');
+  card.innerHTML = `<div class="drop-icon warn" aria-hidden="true"></div>
+    <h1>${t.title}</h1>
+    <p>${t.why()}</p>
+    <ol class="steps">${t.steps().map((x) => `<li>${esc(x)}</li>`).join('')}</ol>
+    ${blocked.detail ? `<p class="detail">${esc(blocked.detail)}</p>` : ''}`;
+  $('#drop').hidden = false;
+  for (const b of document.querySelectorAll('[data-action="open-file"]')) b.disabled = true;
+}
+
 // ---------- worker ----------
 
-const worker = new Worker(URL.createObjectURL(new Blob([$('#worker-src').textContent], { type: 'text/javascript' })));
+let worker = null, workerHello = false;
+try {
+  worker = new Worker(URL.createObjectURL(new Blob([$('#worker-src').textContent], { type: 'text/javascript' })));
+} catch (e) {
+  console.error(e);
+  block('worker', e.message);
+}
 let seq = 0;
 const pending = new Map();
-worker.onmessage = (e) => {
+if (worker) worker.onmessage = (e) => {
+  if ('hello' in e.data) {
+    workerHello = e.data.hello;
+    if (!e.data.hello) block('worker', e.data.error);
+    return;
+  }
   const { id, ok, result, error, progress, file } = e.data;
   const p = pending.get(id);
   if (!p) return;
@@ -76,13 +126,15 @@ worker.onmessage = (e) => {
   if (ok) p.resolve(result);
   else p.reject(new Error(error));
 };
-worker.onerror = (e) => {
+if (worker) worker.onerror = (e) => {
+  if (!workerHello) block('worker', e.message);
   for (const p of pending.values()) p.reject(new Error(e.message || '처리 중에 문제가 생겼어요.'));
   pending.clear();
 };
 function call(cmd, args, opts = {}) {
   const id = ++seq;
   return new Promise((resolve, reject) => {
+    if (blocked.reason) { reject(new Error(BLOCKED_TEXT[blocked.reason].title)); return; }
     pending.set(id, { resolve, reject, ...opts });
     worker.postMessage({ id, cmd, args }, opts.transfer || []);
   });
@@ -134,7 +186,15 @@ const choiceLabel = (c) => {
 
 // ---------- 3D view ----------
 
-const viewer = new Viewer($('#viewport'), { onHover, onPick });
+// without WebGL nothing can be shown; a do-nothing stand-in keeps the rest of the page working
+let viewer;
+try {
+  viewer = new Viewer($('#viewport'), { onHover, onPick });
+} catch (e) {
+  console.error(e);
+  block('webgl', e.message);
+  viewer = new Proxy({}, { get: () => () => undefined });
+}
 
 function onHover(id, ev, moveOnly) {
   const tip = $('#tip');
@@ -218,6 +278,7 @@ function renderLegend() {
 
 async function openFile(file) {
   if (!file) return;
+  if (blocked.reason) { toast(BLOCKED_TEXT[blocked.reason].title, 6000); return; }
   if (!/\.glb$/i.test(file.name)) { toast('GLB 파일(.glb)만 열 수 있어요.'); return; }
   const tOpen = performance.now();
   busy('파일 읽는 중', 0.02);
@@ -1115,6 +1176,12 @@ bindDrop($('#photoDrop'), loadPhoto);
 
 (async () => {
   $('#version').textContent = VERSION;
+  if (embedded && !blocked.reason) {
+    const note = document.createElement('p');
+    note.className = 'detail';
+    note.textContent = '지금은 다른 화면 안에 열려 있어서 저장이 안 될 수 있어요. 파일을 내려받아 더블클릭해서 쓰는 걸 추천해요.';
+    $('#drop .drop-card').append(note);
+  }
   try {
     S.colors = await store.getKV('colors', []);
     for (const m of await store.listMaterials()) addUserMaterial(m);
