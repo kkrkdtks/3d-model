@@ -15,7 +15,7 @@ import sharp from 'sharp';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
-  analyze, applyToGroup, buildGroups, compressKeptTextures, createMaterial, encodeVariant, DEFAULTS,
+  analyze, applyToGroup, buildGroups, colorLabel, compressKeptTextures, createMaterial, encodeVariant, resolveChoice, DEFAULTS,
 } from '../core/skin.js';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
@@ -127,10 +127,11 @@ async function cmdRun(jobPath) {
     const made = [];
     for (const choice of combo) {
       const g = groups.find((x) => x.name === choice.group);
-      const { mat, def, color } = await createMaterial(doc, lib, choice.material, choice.color, loadImage, cache);
-      applyToGroup(doc, g, mat, def);
+      const resolved = resolveChoice(lib, choice.material, choice.color);
+      const { mat, def, color } = await createMaterial(doc, resolved.def, resolved.color, loadImage, cache);
+      applyToGroup(doc, g, mat, def, { rotate: choice.rotate || 0 });
       made.push(mat);
-      choice.label = `${def.name}-${color.name}`;
+      choice.label = [def.name, colorLabel(color)].filter(Boolean).join('-');
     }
     const name = `${path.basename(input, '.glb')}__${combo.map((c) => `${c.group}-${c.label}`).map(slug).join('__')}.glb`;
     const bytes = await encodeVariant(io, doc);

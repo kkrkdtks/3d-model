@@ -101,6 +101,46 @@ function trianglesOf(index, faces) {
   return out;
 }
 
+/** Drop unused vertices and renumber, keeping first-use order. */
+function compactIndexed(pos, index) {
+  const remap = new Int32Array(pos.length / 3).fill(-1);
+  const out = new Uint32Array(index.length);
+  let n = 0;
+  for (let i = 0; i < index.length; i++) {
+    const v = index[i];
+    if (remap[v] < 0) remap[v] = n++;
+    out[i] = remap[v];
+  }
+  const p = new Float32Array(n * 3);
+  for (let v = 0; v < remap.length; v++) if (remap[v] >= 0) p.set(pos.subarray(v * 3, v * 3 + 3), remap[v] * 3);
+  return { pos: p, index: out };
+}
+
+/** meshoptimizer simplification on plain arrays (MeshoptSimplifier.ready must have resolved). */
+export function simplifyIndexed(pos, index, ratio, error, lockBorder = true) {
+  if (ratio >= 1) return compactIndexed(pos, index);
+  const target = Math.floor((ratio * index.length) / 3) * 3;
+  const [dst] = MeshoptSimplifier.simplify(index, pos, 3, target, error, lockBorder ? ['LockBorder'] : []);
+  return compactIndexed(pos, dst);
+}
+
+/**
+ * New geometry for faces that get a tiling material: welded, simplified, smooth normals and
+ * box-projected UVs in model units (multiply by unitsToMeters for metres).
+ * Shared by the export and the live preview, so what you see is what gets saved.
+ */
+export function reskinGeometry(welded, faces, opts = {}) {
+  const o = { ...DEFAULTS, ...opts };
+  const sub = compactIndexed(welded.pos, trianglesOf(welded.index, faces));
+  const simp = simplifyIndexed(sub.pos, sub.index, o.simplify, o.error, true);
+  const nrm = vertexNormals(simp.pos, simp.index, simp.pos.length / 3);
+  return boxUV(simp.pos, nrm, simp.index, 1);
+}
+
+export function facesOfParts(faceLabels, parts) {
+  return selectFaces(faceLabels, parts);
+}
+
 /**
  * Replace the main primitive with one primitive per group.
  * groups: [{ name, parts: [partIds], reskin: true|false }]; faces not covered go to a kept "rest" group.
@@ -124,21 +164,15 @@ export function buildGroups(doc, analysis, groups, opts = {}) {
     if (!faces.length) continue;
     let p;
     if (g.reskin) {
+      const geo = reskinGeometry(welded, faces, o);
+      const uvMeters = geo.uv.map((x) => x * m2u);
       p = doc.createPrimitive()
-        .setAttribute('POSITION', doc.createAccessor().setType('VEC3').setArray(welded.pos).setBuffer(buffer))
-        .setIndices(doc.createAccessor().setType('SCALAR').setArray(trianglesOf(welded.index, faces)).setBuffer(buffer));
-      compactPrimitive(p);
-      simplifyPrimitive(p, { simplifier: MeshoptSimplifier, ratio: o.simplify, error: o.error, lockBorder: true });
-      const pos = floatArray(p.getAttribute('POSITION')), idx = indexArray(p);
-      const nrm = vertexNormals(pos, idx, pos.length / 3);
-      const uv = boxUV(pos, nrm, idx, m2u);
-      for (const a of [p.getAttribute('POSITION'), p.getIndices()]) a.dispose();
-      p.setAttribute('POSITION', doc.createAccessor().setType('VEC3').setArray(uv.position).setBuffer(buffer))
-        .setAttribute('NORMAL', doc.createAccessor().setType('VEC3').setArray(uv.normal).setBuffer(buffer))
-        .setAttribute('TEXCOORD_0', doc.createAccessor().setType('VEC2').setArray(uv.uv.slice()).setBuffer(buffer))
-        .setIndices(doc.createAccessor().setType('SCALAR').setArray(uv.index).setBuffer(buffer));
+        .setAttribute('POSITION', doc.createAccessor().setType('VEC3').setArray(geo.position).setBuffer(buffer))
+        .setAttribute('NORMAL', doc.createAccessor().setType('VEC3').setArray(geo.normal).setBuffer(buffer))
+        .setAttribute('TEXCOORD_0', doc.createAccessor().setType('VEC2').setArray(uvMeters.slice()).setBuffer(buffer))
+        .setIndices(doc.createAccessor().setType('SCALAR').setArray(geo.index).setBuffer(buffer));
       p.setExtras({ group: g.name });
-      out.push({ ...g, prim: p, uvMeters: uv.uv });
+      out.push({ ...g, prim: p, uvMeters });
     } else {
       p = prim.clone().setIndices(doc.createAccessor().setType('SCALAR').setArray(trianglesOf(origIndex, faces)).setBuffer(buffer));
       compactPrimitive(p);
@@ -164,33 +198,51 @@ export function hexToLinear(hex) {
   return [0, 2, 4].map((i) => srgbToLinear(parseInt(h.slice(i, i + 2), 16) / 255));
 }
 
-/**
- * Create a glTF material for a library entry + colour.
- * loadImage(path) -> Promise<Uint8Array> reads a texture file from the library.
- */
-export async function createMaterial(doc, lib, materialId, colorId, loadImage, cache = new Map()) {
+const HEX = /^#?([0-9a-f]{6})$/i;
+
+/** Library entry + colour for a job choice. colorId is a palette id or a hex code. */
+export function resolveChoice(lib, materialId, colorId) {
   const def = lib.materials.find((m) => m.id === materialId);
   if (!def) throw new Error(`재질을 찾을 수 없어요: ${materialId}`);
-  const palette = lib.palettes[def.palette] || [];
-  const color = palette.find((c) => c.id === colorId) || (colorId?.startsWith('#') ? { id: colorId, name: colorId, hex: colorId } : null);
+  if (def.colorMode === 'photo') return { def, color: null };
+  const palette = lib.palettes?.[def.palette] || [];
+  const hex = HEX.exec(colorId || '');
+  const color = palette.find((c) => c.id === colorId) || (hex ? { id: `#${hex[1].toUpperCase()}`, name: `#${hex[1].toUpperCase()}`, hex: `#${hex[1].toUpperCase()}` } : null);
   if (!color) throw new Error(`${def.name}에 없는 색상이에요: ${colorId}`);
+  return { def, color };
+}
 
+/** Short label for file and material names, e.g. "코냑-8B4A22" or "8B4A22". */
+export function colorLabel(color) {
+  if (!color?.hex) return '';
+  const hex = color.hex.replace('#', '').toUpperCase();
+  return color.name && color.name.replace('#', '').toUpperCase() !== hex ? `${color.name}-${hex}` : hex;
+}
+
+/**
+ * Create a glTF material for a library entry + colour.
+ * color: { name, hex } tints a neutral texture; null keeps a photo material's own colours.
+ * loadImage(path) -> Promise<Uint8Array> reads a texture file from the library.
+ */
+export async function createMaterial(doc, def, color, loadImage, cache = new Map()) {
   const tex = async (path) => {
     if (!path) return null;
     if (!cache.has(path)) {
-      const bytes = await loadImage(path);
-      const mime = path.endsWith('.webp') ? 'image/webp' : path.endsWith('.png') ? 'image/png' : 'image/jpeg';
+      // loadImage may return raw bytes, or { bytes, mime } when it converted the image
+      const img = await loadImage(path);
+      const bytes = img instanceof Uint8Array ? img : img.bytes;
+      const mime = img.mime || (path.endsWith('.webp') ? 'image/webp' : path.endsWith('.png') ? 'image/png' : 'image/jpeg');
       if (mime === 'image/webp') doc.createExtension(EXTTextureWebP).setRequired(true);
       cache.set(path, doc.createTexture(path).setImage(bytes).setMimeType(mime).setURI(path.replace(/\//g, '_')));
     }
     return cache.get(path);
   };
 
-  // chip colour is the average colour we want to see, so divide out the texture's own brightness
-  const lin = hexToLinear(color.hex);
-  const mean = def.albedoMean || 1;
-  const base = lin.map((c) => Math.min(1, c / mean));
-  const mat = doc.createMaterial(`${def.name} ${color.name}`)
+  // the colour chip is the average colour we want to see, so divide out the texture's own brightness
+  const tint = def.colorMode !== 'photo' && color?.hex;
+  const base = tint ? hexToLinear(color.hex).map((c) => Math.min(1, c / (def.albedoMean || 1))) : [1, 1, 1];
+  const label = colorLabel(tint ? color : null);
+  const mat = doc.createMaterial(label ? `${def.name} ${label}` : def.name)
     .setBaseColorFactor([...base, 1])
     .setMetallicFactor(def.metallic ?? 0)
     .setRoughnessFactor(def.roughness ?? 1)
@@ -206,8 +258,9 @@ export async function createMaterial(doc, lib, materialId, colorId, loadImage, c
     // fabric fibres scatter light at grazing angles: a soft, slightly lighter rim of the same colour
     const ext = doc.createExtension(KHRMaterialsSheen);
     const k = def.sheen.intensity ?? 0.5;
+    const sheenBase = tint ? base : [0.5, 0.5, 0.5];
     mat.setExtension('KHR_materials_sheen', ext.createSheen()
-      .setSheenColorFactor(base.map((c) => Math.min(1, (c * 0.7 + 0.06) * k * 2)))
+      .setSheenColorFactor(sheenBase.map((c) => Math.min(1, (c * 0.7 + 0.06) * k * 2)))
       .setSheenRoughnessFactor(def.sheen.roughness ?? 0.6));
   }
   if (def.clearcoat) {
@@ -216,15 +269,29 @@ export async function createMaterial(doc, lib, materialId, colorId, loadImage, c
       .setClearcoatFactor(def.clearcoat.factor ?? 1)
       .setClearcoatRoughnessFactor(def.clearcoat.roughness ?? 0.1));
   }
-  mat.setExtras({ material: def.id, color: color.id, colorHex: color.hex });
-  return { mat, def, color };
+  mat.setExtras({ material: def.id, color: tint ? color.name || color.hex : null, colorHex: tint ? color.hex : null });
+  return { mat, def, color: tint ? color : null };
+}
+
+/**
+ * UVs in texture tiles from UVs in metres. A tile is tileCm wide (tileHeightCm high, default square);
+ * rotate: 90 turns the pattern a quarter turn (e.g. wood grain along the other side of a table top).
+ */
+export function tileUV(uvMeters, def, rotate = 0) {
+  const tu = (def.tileCm || 25) / 100, tv = (def.tileHeightCm || def.tileCm || 25) / 100;
+  const uv = new Float32Array(uvMeters.length);
+  for (let i = 0; i < uvMeters.length; i += 2) {
+    const u = rotate === 90 ? uvMeters[i + 1] : uvMeters[i];
+    const v = rotate === 90 ? -uvMeters[i] : uvMeters[i + 1];
+    uv[i] = u / tu;
+    uv[i + 1] = v / tv;
+  }
+  return uv;
 }
 
 /** Point a re-skinned group at a material, scaling its metre UVs to the material's tile size. */
-export function applyToGroup(doc, group, mat, def) {
-  const tile = (def.tileCm || 25) / 100;
-  const uv = group.uvMeters.map((x) => x / tile);
-  group.prim.getAttribute('TEXCOORD_0').setArray(uv);
+export function applyToGroup(doc, group, mat, def, opts = {}) {
+  group.prim.getAttribute('TEXCOORD_0').setArray(tileUV(group.uvMeters, def, opts.rotate || 0));
   group.prim.setMaterial(mat);
 }
 
@@ -236,17 +303,26 @@ export async function compressKeptTextures(doc, encodeTexture, maxSize = DEFAULT
       t.setImage(out.bytes).setMimeType(out.mimeType);
       if (out.mimeType === 'image/webp') doc.createExtension(EXTTextureWebP).setRequired(true);
       const uri = t.getURI();
-      if (uri) t.setURI(uri.replace(/\.(png|jpe?g)$/i, '.webp'));
+      const ext = { 'image/webp': '.webp', 'image/png': '.png', 'image/jpeg': '.jpg' }[out.mimeType] || '';
+      if (uri && ext) t.setURI(uri.replace(/\.(png|jpe?g|webp)$/i, ext));
     }
   }
 }
 
-/** meshopt-compress a finished variant document and return GLB bytes. */
-export async function encodeVariant(io, doc) {
-  await MeshoptEncoder.ready;
+/**
+ * Compress a finished variant document and return GLB bytes.
+ * meshopt (EXT_meshopt_compression) gives the smallest files; without it only quantization is used.
+ */
+export async function encodeVariant(io, doc, opts = {}) {
+  const { meshopt = true } = opts;
   const copy = cloneDocument(doc);
-  await copy.transform(prune({ keepExtras: true }), reorder({ encoder: MeshoptEncoder }), quantize());
-  copy.createExtension(EXTMeshoptCompression).setRequired(true).setEncoderOptions({ method: EXTMeshoptCompression.EncoderMethod.FILTER });
+  if (meshopt) {
+    await MeshoptEncoder.ready;
+    await copy.transform(prune({ keepExtras: true }), reorder({ encoder: MeshoptEncoder }), quantize());
+    copy.createExtension(EXTMeshoptCompression).setRequired(true).setEncoderOptions({ method: EXTMeshoptCompression.EncoderMethod.FILTER });
+  } else {
+    await copy.transform(prune({ keepExtras: true }), quantize());
+  }
   copy.createExtension(KHRMeshQuantization).setRequired(true);
   return io.writeBinary(copy);
 }
