@@ -133,10 +133,67 @@ def write_set(name, alb, n, rough, ao, outdir, size_out=None):
     rs(Image.fromarray((orm * 255 + .5).astype(np.uint8))).save(f"{outdir}/{name}_orm.png")
 
 
+def leather_extra(size=2048, seed=11, kind="nappa"):
+    """More furniture leathers: nappa (fine, soft), milled (big tumbled pebble),
+    nubuck and suede (sanded / napped, velvety, no visible grain cells)."""
+    rng = np.random.default_rng(seed)
+    if kind in ("nappa", "milled"):
+        cells = {"nappa": 120, "milled": 46}[kind]
+        warp = (fft_noise(size, rng, 3, 12) * 0.6, fft_noise(size, rng, 3, 12) * 0.6)
+        F1, F2, ID = worley_id(size, cells, rng, warp, jitter=1.0, aniso=1.15)
+        w = F2 - F1
+        amp = 0.75 + 0.25 * rng.random(cells * cells)[ID]
+        pebble = amp * (smoothstep(0.0, 0.6, w) ** 0.85 if kind == "nappa" else np.sqrt(smoothstep(0.0, 0.95, w)))
+        warp2 = (fft_noise(size, rng, 10, 40) * 0.4, fft_noise(size, rng, 10, 40) * 0.4)
+        G1, G2, _ = worley_id(size, cells * (2 if kind == "nappa" else 4), rng, warp2, jitter=1.0)
+        sub = smoothstep(0.0, 0.3, G2 - G1)
+        if kind == "milled":
+            # tumbled leather: big soft pebbles broken by finer creases, deeper relief
+            h = blur(pebble * (0.85 + 0.15 * sub), 2.5)
+            hh = 0.8 * h + 0.45 * fft_noise(size, rng, 1.5, 6) + 0.03 * fft_noise(size, rng, 200, 500)
+            n = normal_from_height(hh, strength=1.3 * size / 1024)
+            crease = blur(1 - smoothstep(0.0, 0.25, w), 3.0)
+            alb = 1.0 - 0.03 * crease + 0.02 * fft_noise(size, rng, 1.5, 5)
+            rough = 0.58 + 0.10 * crease
+            ao = 1.0 - 0.3 * crease
+        else:
+            # nappa: very fine shallow grain and pores, soft satin sheen
+            h = blur(pebble * (0.85 + 0.15 * sub), 0.7)
+            pores = smoothstep(0.55, 0.95, fft_noise(size, rng, 250, 600))
+            hh = 0.35 * h + 0.35 * fft_noise(size, rng, 1.5, 6) - 0.05 * pores
+            n = normal_from_height(hh, strength=1.2 * size / 1024)
+            alb = 1.0 - 0.02 * (1 - h) + 0.015 * fft_noise(size, rng, 1.5, 5) - 0.02 * pores
+            rough = 0.42 + 0.06 * (1 - h)
+            ao = 1.0 - 0.08 * (1 - h)
+    else:
+        # nubuck / suede: sanded surface, tiny fibres, brushed "writing effect" patches
+        fib = blur(rng.standard_normal((size, size)).astype(np.float32), 0.7)
+        fib = fib / (np.abs(fib).max() + 1e-6)
+        brush = fft_noise(size, rng, 2, 9)
+        if kind == "suede":
+            streak = blur(np.repeat(rng.standard_normal((size, 1)).astype(np.float32), size, 1), 1.0)
+            streak = np.roll(streak, 0, 0) / (np.abs(streak).max() + 1e-6)
+            hh = 0.10 * fib + 0.05 * streak + 0.25 * fft_noise(size, rng, 1.5, 6)
+            alb = 1.0 - 0.06 * (0.5 + 0.5 * brush) + 0.03 * fib + 0.02 * streak
+            rough = 0.92 + 0.04 * fib
+        else:
+            hh = 0.06 * fib + 0.25 * fft_noise(size, rng, 1.5, 6) + 0.08 * fft_noise(size, rng, 30, 90)
+            alb = 1.0 - 0.07 * (0.5 + 0.5 * brush) + 0.02 * fib
+            rough = 0.86 + 0.05 * fib
+        n = normal_from_height(hh, strength=1.0 * size / 1024)
+        ao = 1.0 - 0.05 * (0.5 + 0.5 * brush)
+    alb = np.clip(alb / alb.max(), 0, 1)
+    return alb, n, np.clip(rough, 0.05, 1), np.clip(ao, 0, 1)
+
+
 if __name__ == "__main__":
     out = sys.argv[1] if len(sys.argv) > 1 else "out"
     write_set("leather_matte", *leather(2048, 1, 64, "matte"), out, 1024)
     write_set("leather_gloss", *leather(2048, 4, 80, "gloss"), out, 1024)
     write_set("leather_vintage", *leather(2048, 5, 56, "vintage"), out, 1024)
     write_set("fabric_linen", *linen(2048, 2), out, 1024)
+    write_set("leather_nappa", *leather_extra(2048, 11, "nappa"), out, 1024)
+    write_set("leather_milled", *leather_extra(2048, 12, "milled"), out, 1024)
+    write_set("leather_nubuck", *leather_extra(2048, 13, "nubuck"), out, 1024)
+    write_set("leather_suede", *leather_extra(2048, 14, "suede"), out, 1024)
     print("saved to", out)

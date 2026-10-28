@@ -11,7 +11,12 @@
     "@gltf-transform/core": "4.5.1",
     "@gltf-transform/extensions": "4.5.1",
     "@gltf-transform/functions": "4.5.1",
+    "fflate": "^0.8.2",
     "meshoptimizer": "0.25.0",
-    "sharp": "0.34.4"
+    "sharp": "0.34.4",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
   }
 }

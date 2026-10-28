@@ -58,6 +58,82 @@
       "albedoMean": 0.7738
     },
     {
+      "id": "leather-nappa",
+      "name": "나파 가죽",
+      "category": "가죽",
+      "palette": "leather",
+      "tileCm": 10,
+      "roughness": 1,
+      "metallic": 0,
+      "normalScale": 0.8,
+      "source": "procedural v2",
+      "maps": {
+        "baseColor": "leather-nappa/albedo.webp",
+        "normal": "leather-nappa/normal.webp",
+        "orm": "leather-nappa/orm.webp"
+      },
+      "albedoMean": 0.9491
+    },
+    {
+      "id": "leather-milled",
+      "name": "밀링 가죽",
+      "category": "가죽",
+      "palette": "leather",
+      "tileCm": 24,
+      "roughness": 1,
+      "metallic": 0,
+      "normalScale": 1,
+      "source": "procedural v2",
+      "maps": {
+        "baseColor": "leather-milled/albedo.webp",
+        "normal": "leather-milled/normal.webp",
+        "orm": "leather-milled/orm.webp"
+      },
+      "albedoMean": 0.9449
+    },
+    {
+      "id": "leather-nubuck",
+      "name": "누벅",
+      "category": "가죽",
+      "palette": "leather",
+      "tileCm": 20,
+      "roughness": 1,
+      "metallic": 0,
+      "normalScale": 1,
+      "sheen": {
+        "intensity": 0.35,
+        "roughness": 0.7
+      },
+      "source": "procedural v2",
+      "maps": {
+        "baseColor": "leather-nubuck/albedo.webp",
+        "normal": "leather-nubuck/normal.webp",
+        "orm": "leather-nubuck/orm.webp"
+      },
+      "albedoMean": 0.9045
+    },
+    {
+      "id": "leather-suede",
+      "name": "스웨이드",
+      "category": "가죽",
+      "palette": "leather",
+      "tileCm": 16,
+      "roughness": 1,
+      "metallic": 0,
+      "normalScale": 1,
+      "sheen": {
+        "intensity": 0.5,
+        "roughness": 0.6
+      },
+      "source": "procedural v2",
+      "maps": {
+        "baseColor": "leather-suede/albedo.webp",
+        "normal": "leather-suede/normal.webp",
+        "orm": "leather-suede/orm.webp"
+      },
+      "albedoMean": 0.8895
+    },
+    {
       "id": "fabric-linen",
       "name": "린넨 패브릭",
       "category": "패브릭",
