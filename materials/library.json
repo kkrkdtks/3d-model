@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "note": "재질칩(질감) 목록. 색상은 palettes의 컬러칩을 곱해서 입혀요. 거래처 원단 사진이 정리되면 procedural 재질을 교체해요.",
+  "materials": [
+    {
+      "id": "leather-matte",
+      "name": "무광 가죽",
+      "category": "가죽",
+      "palette": "leather",
+      "tileCm": 16,
+      "roughness": 1,
+      "metallic": 0,
+      "normalScale": 0.8,
+      "source": "procedural v2",
+      "maps": {
+        "baseColor": "leather-matte/albedo.webp",
+        "normal": "leather-matte/normal.webp",
+        "orm": "leather-matte/orm.webp"
+      },
+      "albedoMean": 0.9413
+    },
+    {
+      "id": "leather-gloss",
+      "name": "유광 가죽",
+      "category": "가죽",
+      "palette": "leather",
+      "tileCm": 14,
+      "roughness": 1,
+      "metallic": 0,
+      "normalScale": 0.7,
+      "clearcoat": {
+        "factor": 0.35,
+        "roughness": 0.25
+      },
+      "source": "procedural v2",
+      "maps": {
+        "baseColor": "leather-gloss/albedo.webp",
+        "normal": "leather-gloss/normal.webp",
+        "orm": "leather-gloss/orm.webp"
+      },
+      "albedoMean": 0.9482
+    },
+    {
+      "id": "leather-vintage",
+      "name": "빈티지 가죽",
+      "category": "가죽",
+      "palette": "leather",
+      "tileCm": 18,
+      "roughness": 1,
+      "metallic": 0,
+      "normalScale": 0.8,
+      "source": "procedural v2",
+      "maps": {
+        "baseColor": "leather-vintage/albedo.webp",
+        "normal": "leather-vintage/normal.webp",
+        "orm": "leather-vintage/orm.webp"
+      },
+      "albedoMean": 0.7738
+    },
+    {
+      "id": "fabric-linen",
+      "name": "린넨 패브릭",
+      "category": "패브릭",
+      "palette": "fabric",
+      "tileCm": 5,
+      "roughness": 1,
+      "metallic": 0,
+      "normalScale": 1,
+      "sheen": {
+        "intensity": 0.5,
+        "roughness": 0.55
+      },
+      "source": "procedural v1",
+      "maps": {
+        "baseColor": "fabric-linen/albedo.webp",
+        "normal": "fabric-linen/normal.webp",
+        "orm": "fabric-linen/orm.webp"
+      },
+      "albedoMean": 0.7102
+    },
+    {
+      "id": "paint-matte",
+      "name": "무광 도장",
+      "category": "도장",
+      "palette": "paint",
+      "roughness": 0.62,
+      "metallic": 0
+    },
+    {
+      "id": "paint-gloss",
+      "name": "유광 도장",
+      "category": "도장",
+      "palette": "paint",
+      "roughness": 0.18,
+      "metallic": 0,
+      "clearcoat": {
+        "factor": 1,
+        "roughness": 0.05
+      }
+    },
+    {
+      "id": "metal",
+      "name": "메탈",
+      "category": "메탈",
+      "palette": "metal",
+      "roughness": 0.38,
+      "metallic": 1
+    }
+  ],
+  "palettes": {
+    "leather": [
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#1D1C1B"
+      },
+      {
+        "id": "red",
+        "name": "레드",
+        "hex": "#8A1C1E"
+      },
+      {
+        "id": "burgundy",
+        "name": "버건디",
+        "hex": "#561A20"
+      },
+      {
+        "id": "cognac",
+        "name": "코냑",
+        "hex": "#8B4A22"
+      },
+      {
+        "id": "camel",
+        "name": "카멜",
+        "hex": "#B07B48"
+      },
+      {
+        "id": "blue",
+        "name": "블루",
+        "hex": "#24467C"
+      },
+      {
+        "id": "navy",
+        "name": "네이비",
+        "hex": "#1D2840"
+      },
+      {
+        "id": "taupe",
+        "name": "토프",
+        "hex": "#7B6C60"
+      },
+      {
+        "id": "white",
+        "name": "화이트",
+        "hex": "#E8E5DE"
+      }
+    ],
+    "fabric": [
+      {
+        "id": "white",
+        "name": "화이트",
+        "hex": "#ECEAE4"
+      },
+      {
+        "id": "ivory",
+        "name": "아이보리",
+        "hex": "#E4DCCD"
+      },
+      {
+        "id": "beige",
+        "name": "베이지",
+        "hex": "#C8B59B"
+      },
+      {
+        "id": "grey",
+        "name": "그레이",
+        "hex": "#8C8B88"
+      },
+      {
+        "id": "charcoal",
+        "name": "차콜",
+        "hex": "#3A3A3C"
+      },
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#222224"
+      },
+      {
+        "id": "olive",
+        "name": "올리브",
+        "hex": "#6A6A47"
+      },
+      {
+        "id": "dusty-blue",
+        "name": "더스티 블루",
+        "hex": "#6E8496"
+      }
+    ],
+    "paint": [
+      {
+        "id": "white",
+        "name": "화이트",
+        "hex": "#EFEFEC"
+      },
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#1B1B1C"
+      },
+      {
+        "id": "red",
+        "name": "레드",
+        "hex": "#A3201F"
+      },
+      {
+        "id": "blue",
+        "name": "블루",
+        "hex": "#24498A"
+      }
+    ],
+    "metal": [
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#2A2A2B"
+      },
+      {
+        "id": "brass",
+        "name": "브라스",
+        "hex": "#C9A15C"
+      },
+      {
+        "id": "chrome",
+        "name": "크롬",
+        "hex": "#D8D8D8"
+      },
+      {
+        "id": "gunmetal",
+        "name": "건메탈",
+        "hex": "#55575B"
+      }
+    ]
+  }
+}

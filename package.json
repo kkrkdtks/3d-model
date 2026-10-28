@@ -1,0 +1,17 @@
+{
+  "name": "furniture-skin-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "3DAISTUDIO 가구 GLB 압축 + 부분 재질(스킨) 변경 도구",
+  "scripts": {
+    "skin": "node cli/skin.mjs"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "4.5.1",
+    "@gltf-transform/extensions": "4.5.1",
+    "@gltf-transform/functions": "4.5.1",
+    "meshoptimizer": "0.25.0",
+    "sharp": "0.34.4"
+  }
+}
