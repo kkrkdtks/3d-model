@@ -61,7 +61,7 @@
 <dialog class="dialog wide" id="photoDialog">
   <form method="dialog" class="dialog-body" id="photoForm">
     <header class="dialog-head">
-      <h2>사진으로 재질 만들기</h2>
+      <h2 id="photoTitle">사진으로 재질 만들기</h2>
       <button class="icon-btn" value="cancel" aria-label="닫기" type="submit">×</button>
     </header>
     <div class="photo-grid">
@@ -74,6 +74,7 @@
             <input type="file" id="photoInput" accept="image/*" hidden>
           </div>
         </div>
+        <div class="photo-tools" id="photoTools" hidden><button class="btn ghost small" type="button" data-action="photo-pick">다른 사진 넣기</button></div>
         <p class="note">같은 무늬를 2×2로 이어 붙이고 비스듬히 빛을 비춰 보여줘요. 이음매, 요철, 광택을 확인하고, 왼쪽 아래 자로 실제 크기를 가늠해 보세요.</p>
       </div>
       <div class="photo-form" id="photoFields"></div>
@@ -81,6 +82,7 @@
     <footer class="dialog-foot">
       <span class="note" id="photoStatus"></span>
       <button class="btn ghost" value="cancel" type="submit">취소</button>
+      <button class="btn ghost" type="button" data-action="photo-save-copy" id="photoSaveCopy" hidden>새 재질로 저장</button>
       <button class="btn" type="button" data-action="photo-save" id="photoSave" disabled>저장하고 쓰기</button>
     </footer>
   </form>

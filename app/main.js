@@ -636,7 +636,7 @@ function matCard(m, g) {
     <span class="cap"><b>${esc(m.name)}</b><small>${meta}</small></span>
     ${m.colorMode === 'photo' ? '<span class="badge">사진 색</span>' : m.source === 'photo' ? '<span class="badge">사진</span>' : ''}
     ${count ? `<span class="count">${count}</span>` : ''}
-  </button>${m.builtin ? '' : `<button class="mat-del" type="button" data-action="mat-delete" data-id="${esc(m.id)}" title="삭제" aria-label="‘${esc(m.name)}’ 삭제">×</button>`}</div>`;
+  </button>${m.builtin ? '' : `<button class="mat-edit" type="button" data-action="mat-edit" data-id="${esc(m.id)}" title="수정" aria-label="‘${esc(m.name)}’ 수정">✎</button><button class="mat-del" type="button" data-action="mat-delete" data-id="${esc(m.id)}" title="삭제" aria-label="‘${esc(m.name)}’ 삭제">×</button>`}</div>`;
 }
 
 function colorChip(c, on) {
@@ -646,15 +646,16 @@ function colorChip(c, on) {
 }
 
 function colorArea(m, g) {
+  const edit = m.builtin ? '' : `<button class="link" type="button" data-action="mat-edit" data-id="${esc(m.id)}">재질 수정</button>`;
   if (m.colorMode === 'photo') {
     const on = g.choices.some((c) => c.materialId === m.id);
-    return `<div class="sub-head"><span class="label">${esc(m.name)}</span></div>
+    return `<div class="sub-head"><span class="label">${esc(m.name)}</span>${edit}</div>
       <p class="hint">사진의 색과 무늬를 그대로 써요.</p>
       <div><button class="btn small ${on ? 'ghost' : ''}" type="button" data-action="photo-toggle" data-id="${esc(m.id)}">${on ? '변형에서 빼기' : '변형에 넣기'}</button></div>`;
   }
   const isOn = (hex) => g.choices.some((c) => c.materialId === m.id && c.color?.hex === hex);
   const pal = palettes[m.palette] || [];
-  return `<div class="sub-head"><span class="label">${esc(m.name)}의 색 · 여러 개 고를 수 있어요</span>
+  return `<div class="sub-head"><span class="label">${esc(m.name)}의 색 · 여러 개 고를 수 있어요</span>${edit}
       <a class="note" href="https://encycolorpedia.com/" target="_blank" rel="noopener">encycolorpedia ↗</a></div>
     <div class="input-row"><input class="input mono" id="hexInput" placeholder="#8B4A22, #1D1C1B" autocomplete="off" spellcheck="false">
       <button class="btn small" type="button" data-action="hex-add">추가</button></div>
@@ -913,43 +914,116 @@ async function runExport(kind) {
 
 // ---------- photo materials ----------
 
-const photo = { bitmap: null, kind: 'marble', colorMode: 'photo', widthCm: 60, overlap: 0.2, flatten: true, bump: 0.2, gloss: 0.85, contrast: 1, res: 2048, name: '', size: null };
+// editId: the material being edited (null = a new one). legacyOut: its saved textures, when it was
+// made before the photo itself was kept; then only size, bump, gloss and name can change.
+const photo = {
+  bitmap: null, kind: 'marble', colorMode: 'photo', widthCm: 60, overlap: 0.2, flatten: true, bump: 0.2, gloss: 0.85,
+  contrast: 1, res: 2048, name: '', size: null, editId: null, legacyOut: null,
+};
 let photoTimer = 0, photoSeq = 0;
 let photoProcessed = null; // last processed preview: bump and gloss changes only re-light it
 const EXAMPLE_TINT = { fabric: '#8C8B88', leather: '#8B4A22' };
 
+function resetPhotoSource() {
+  photo.bitmap?.close?.();
+  Object.assign(photo, { bitmap: null, size: null, legacyOut: null });
+  photoProcessed = null;
+}
+
 function openPhotoDialog(kind) {
   const k = KINDS[kind] || KINDS.other;
-  Object.assign(photo, { kind, colorMode: k.colorMode, widthCm: k.widthCm, bump: k.bump, gloss: k.gloss, contrast: k.contrast, res: k.colorMode === 'photo' ? 2048 : 1024 });
+  resetPhotoSource();
+  Object.assign(photo, { editId: null, kind, colorMode: k.colorMode, widthCm: k.widthCm, bump: k.bump, gloss: k.gloss, contrast: k.contrast, overlap: 0.2, flatten: true, res: k.colorMode === 'photo' ? 2048 : 1024 });
   photo.name = `${k.label} ${userMaterials.filter((m) => m.kind === kind).length + 1}`;
+  showPhotoDialog();
+}
+
+/** Open a material made from a photo with the values it was made with. */
+async function openEditDialog(id) {
+  const def = materialById(id);
+  if (!def || def.builtin) return;
+  const k = KINDS[def.kind] || KINDS.other;
+  const made = def.photo || {}; // the values used to make it (materials from v0.3 on)
+  resetPhotoSource();
+  Object.assign(photo, {
+    editId: id, kind: KINDS[def.kind] ? def.kind : 'other', colorMode: def.colorMode === 'photo' ? 'photo' : 'tint',
+    widthCm: def.tileCm, name: def.name,
+    bump: made.bump ?? def.normalScale ?? k.bump,
+    gloss: made.gloss ?? +Math.min(1, Math.max(0, (0.92 - (def.roughness ?? 0.6)) / 0.8)).toFixed(2),
+    contrast: made.contrast ?? k.contrast, overlap: made.overlap ?? 0.2, flatten: made.flatten ?? true,
+    res: made.res ?? (def.colorMode === 'photo' ? 2048 : 1024),
+  });
+  try {
+    const src = files.get(`${id}/source.jpg`);
+    if (src) {
+      photo.bitmap = await createImageBitmap(src);
+      photo.size = { w: photo.bitmap.width, h: photo.bitmap.height };
+    } else {
+      photo.legacyOut = await savedTiles(def);
+      photo.size = { w: photo.legacyOut.width, h: photo.legacyOut.height };
+    }
+  } catch (e) {
+    console.error(e);
+    toast('저장된 재질 이미지를 읽지 못했어요. 사진을 다시 넣으면 고칠 수 있어요.', 6000);
+  }
+  showPhotoDialog();
+}
+
+/** The saved colour and bump maps of a material, in the form processPhoto returns (for the preview). */
+async function savedTiles(def) {
+  const canvasOf = async (path) => {
+    const bmp = await createImageBitmap(await getBlob(path), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+    const c = new OffscreenCanvas(bmp.width, bmp.height);
+    c.getContext('2d').drawImage(bmp, 0, 0);
+    bmp.close();
+    return c;
+  };
+  const [albedo, normal] = await Promise.all([canvasOf(def.maps.baseColor), canvasOf(def.maps.normal)]);
+  return { albedo, normal, width: albedo.width, height: albedo.height, albedoMean: def.albedoMean || 1 };
+}
+
+function showPhotoDialog() {
+  const editing = !!photo.editId;
+  $('#photoTitle').textContent = editing ? '재질 수정하기' : '사진으로 재질 만들기';
+  $('#photoSave').textContent = editing ? '수정 저장' : '저장하고 쓰기';
+  $('#photoSaveCopy').hidden = !editing;
   renderPhotoFields();
   drawPhotoPreview();
-  $('#photoDialog').showModal();
+  if (!$('#photoDialog').open) $('#photoDialog').showModal();
 }
 
 function renderPhotoFields() {
-  const kinds = Object.entries(KINDS).map(([k, v]) => `<button type="button" data-action="photo-kind" data-kind="${k}" class="${photo.kind === k ? 'on' : ''}">${v.label}</button>`).join('');
+  const editing = !!photo.editId;
+  // without the original photo, only what the material itself says can change
+  const noPhoto = !photo.bitmap && !!photo.legacyOut;
+  const lockKind = editing ? 'disabled' : '', lockPhoto = noPhoto ? 'disabled' : '';
+  const kinds = Object.entries(KINDS).map(([k, v]) => `<button type="button" data-action="photo-kind" data-kind="${k}" class="${photo.kind === k ? 'on' : ''}" ${lockKind}>${v.label}</button>`).join('');
   const dims = photo.size ? `사진 비율대로 세로 ${(photo.widthCm * photo.size.h / photo.size.w).toFixed(0)}cm` : '';
+  const notes = [
+    editing ? '수정할 때는 종류와 색 방식은 바꿀 수 없어요. 다르게 쓰려면 같은 사진으로 새로 만들어 주세요.' : '',
+    noPhoto ? '원본 사진을 저장하기 전에 만든 재질이라 크기·요철·광택·이름만 바꿀 수 있어요. 같은 사진을 다시 넣으면 모든 값을 바꿀 수 있어요.' : '',
+  ].filter(Boolean);
   $('#photoFields').innerHTML = `
+    ${notes.map((n) => `<p class="lock">${n}</p>`).join('')}
     <div class="field"><span class="label">종류</span><div class="seg flat" role="group">${kinds}</div></div>
     <div class="field"><span class="label">색</span>
-      <label class="check"><input type="radio" name="pcolor" value="photo" ${photo.colorMode === 'photo' ? 'checked' : ''}><span>사진 색 그대로<small>대리석·나무처럼 무늬에 색이 있는 재질</small></span></label>
-      <label class="check"><input type="radio" name="pcolor" value="tint" ${photo.colorMode === 'tint' ? 'checked' : ''}><span>질감만 쓰고 색은 hex로<small>거래처 원단·가죽 사진을 여러 색으로 쓸 때</small></span></label></div>
+      <label class="check"><input type="radio" name="pcolor" value="photo" ${photo.colorMode === 'photo' ? 'checked' : ''} ${lockKind}><span>사진 색 그대로<small>대리석·나무처럼 무늬에 색이 있는 재질</small></span></label>
+      <label class="check"><input type="radio" name="pcolor" value="tint" ${photo.colorMode === 'tint' ? 'checked' : ''} ${lockKind}><span>질감만 쓰고 색은 hex로<small>거래처 원단·가죽 사진을 여러 색으로 쓸 때</small></span></label></div>
     <div class="field"><label for="pWidth">사진 가로의 실제 크기</label>
       <div class="input-row"><input class="input num" id="pWidth" inputmode="decimal" value="${photo.widthCm}"><span class="unit">cm</span><span class="note">${dims}</span></div></div>
     <div class="field"><label for="pContrast">무늬 진하기</label>
-      <div class="range-row"><span class="note">연하게</span><input type="range" id="pContrast" min="0.1" max="1.5" step="0.05" value="${photo.contrast}"><span class="note">진하게</span></div>
+      <div class="range-row"><span class="note">연하게</span><input type="range" id="pContrast" min="0.1" max="1.5" step="0.05" value="${photo.contrast}" ${lockPhoto}><span class="note">진하게</span></div>
       <span class="note">사진 속 얼룩과 명암을 얼마나 살릴지예요. 가죽·원단은 연하게 시작해요.</span></div>
     <div class="field"><label for="pOverlap">이음매 부드럽게</label>
-      <div class="range-row"><input type="range" id="pOverlap" min="0" max="0.4" step="0.02" value="${photo.overlap}"><span class="note mono">${Math.round(photo.overlap * 100)}%</span></div></div>
-    <label class="check"><input type="checkbox" id="pFlatten" ${photo.flatten ? 'checked' : ''}><span>조명 얼룩 지우기<small>사진 한쪽이 어둡거나 반사가 있을 때</small></span></label>
+      <div class="range-row"><input type="range" id="pOverlap" min="0" max="0.4" step="0.02" value="${photo.overlap}" ${lockPhoto}><span class="note mono">${Math.round(photo.overlap * 100)}%</span></div></div>
+    <label class="check"><input type="checkbox" id="pFlatten" ${photo.flatten ? 'checked' : ''} ${lockPhoto}><span>조명 얼룩 지우기<small>사진 한쪽이 어둡거나 반사가 있을 때</small></span></label>
     <div class="field"><label for="pBump">요철</label>
       <div class="range-row"><span class="note">매끈</span><input type="range" id="pBump" min="0" max="2" step="0.05" value="${photo.bump}"><span class="note">울퉁불퉁</span></div></div>
     <div class="field"><label for="pGloss">광택</label>
       <div class="range-row"><span class="note">무광</span><input type="range" id="pGloss" min="0" max="1" step="0.05" value="${photo.gloss}"><span class="note">유광</span></div></div>
     <div class="field"><span class="label">선명도</span><div class="seg flat" role="group">
-      <button type="button" data-action="photo-res" data-res="1024" class="${photo.res === 1024 ? 'on' : ''}">1K (가벼움)</button>
-      <button type="button" data-action="photo-res" data-res="2048" class="${photo.res === 2048 ? 'on' : ''}">2K (선명)</button></div></div>
+      <button type="button" data-action="photo-res" data-res="1024" class="${photo.res === 1024 ? 'on' : ''}" ${lockPhoto}>1K (가벼움)</button>
+      <button type="button" data-action="photo-res" data-res="2048" class="${photo.res === 2048 ? 'on' : ''}" ${lockPhoto}>2K (선명)</button></div></div>
     <div class="field"><label for="pName">이름</label><input class="input" id="pName" value="${esc(photo.name)}" maxlength="24"></div>`;
 }
 
@@ -961,17 +1035,23 @@ function schedulePhotoPreview() {
 /** 2×2 tiles under a raking light (so bump and gloss show), with a ruler for the real size. */
 async function drawPhotoPreview() {
   const canvas = $('#photoCanvas'), g = canvas.getContext('2d');
-  $('#photoEmpty').hidden = !!photo.bitmap;
-  $('#photoSave').disabled = !photo.bitmap;
-  if (!photo.bitmap) { g.clearRect(0, 0, canvas.width, canvas.height); return; }
+  const ready = !!(photo.bitmap || photo.legacyOut);
+  $('#photoEmpty').hidden = ready;
+  $('#photoTools').hidden = !ready;
+  $('#photoSave').disabled = !ready;
+  $('#photoSaveCopy').disabled = !ready;
+  if (!ready) { g.clearRect(0, 0, canvas.width, canvas.height); return; }
   const seq = ++photoSeq;
-  const key = JSON.stringify([photo.kind, photo.colorMode, photo.overlap, photo.flatten, photo.contrast]);
-  if (photoProcessed?.bitmap !== photo.bitmap || photoProcessed.key !== key) {
-    const out = await processPhoto(photo.bitmap, photo, 384);
-    if (seq !== photoSeq) return;
-    photoProcessed = { bitmap: photo.bitmap, key, out };
+  let out = photo.legacyOut;
+  if (photo.bitmap) {
+    const key = JSON.stringify([photo.kind, photo.colorMode, photo.overlap, photo.flatten, photo.contrast]);
+    if (photoProcessed?.bitmap !== photo.bitmap || photoProcessed.key !== key) {
+      const fresh = await processPhoto(photo.bitmap, photo, 384);
+      if (seq !== photoSeq) return;
+      photoProcessed = { bitmap: photo.bitmap, key, out: fresh };
+    }
+    out = photoProcessed.out;
   }
-  const out = photoProcessed.out;
   const tw = out.width, th = out.height;
   const s = Math.min(canvas.width / (2 * tw), canvas.height / (2 * th));
   const w = tw * s, h = th * s, ox = (canvas.width - 2 * w) / 2, oy = (canvas.height - 2 * h) / 2;
@@ -997,9 +1077,10 @@ function drawRuler(g, r, x, y) {
 async function loadPhoto(file) {
   if (!file || !file.type.startsWith('image/')) { toast('사진 파일(JPG, PNG, WebP)을 골라 주세요.'); return; }
   try {
-    photo.bitmap?.close?.();
-    photo.bitmap = await createImageBitmap(file);
-    photo.size = { w: photo.bitmap.width, h: photo.bitmap.height };
+    const bmp = await createImageBitmap(file);
+    resetPhotoSource();
+    photo.bitmap = bmp;
+    photo.size = { w: bmp.width, h: bmp.height };
     renderPhotoFields();
     drawPhotoPreview();
   } catch {
@@ -1007,55 +1088,96 @@ async function loadPhoto(file) {
   }
 }
 
-async function savePhotoMaterial() {
-  if (!photo.bitmap) return;
-  $('#photoSave').disabled = true;
-  $('#photoStatus').textContent = '재질 만드는 중…';
+/** The photo itself, kept with the material so every value can be changed later (≤ 3072 px JPEG). */
+async function sourceJpeg(bmp, max = 3072) {
+  const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = new OffscreenCanvas(Math.round(bmp.width * s), Math.round(bmp.height * s));
+  const g = c.getContext('2d');
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(bmp, 0, 0, c.width, c.height);
+  return c.convertToBlob({ type: 'image/jpeg', quality: 0.92 });
+}
+
+/**
+ * Save the dialog as a material. A new one, or (editing) the same material with new values:
+ * its variants keep pointing at it and the 3D view updates. asCopy saves an edit as a new material.
+ */
+async function savePhotoMaterial(asCopy = false) {
+  if (!photo.bitmap && !photo.legacyOut) return;
+  const before = photo.editId ? materialById(photo.editId) : null;
+  const replacing = before && !asCopy ? before : null;
+  for (const b of [$('#photoSave'), $('#photoSaveCopy')]) b.disabled = true;
+  $('#photoStatus').textContent = replacing ? '재질 고치는 중…' : '재질 만드는 중…';
   try {
-    const out = await processPhoto(photo.bitmap, photo, photo.res);
-    const id = uid('photo-');
+    const id = replacing ? replacing.id : uid('photo-');
+    const k = KINDS[photo.kind] || KINDS.other;
     const surf = glossToSurface(photo.gloss);
-    const k = KINDS[photo.kind];
+    const widthCm = +photo.widthCm || k.widthCm;
+    let blobs, albedoMean, aspect;
+    if (photo.bitmap) {
+      const out = await processPhoto(photo.bitmap, photo, photo.res);
+      blobs = {
+        'albedo.webp': await canvasBlob(out.albedo, 'image/webp', 0.92),
+        'normal.webp': await canvasBlob(out.normal, 'image/webp', 0.95),
+        'orm.webp': await canvasBlob(out.orm, 'image/webp', 0.9),
+        'source.jpg': await sourceJpeg(photo.bitmap),
+      };
+      albedoMean = out.albedoMean;
+      aspect = out.height / out.width;
+    } else {
+      // no original photo: the textures stay, only the material's own values change
+      blobs = {};
+      for (const n of ['albedo.webp', 'normal.webp', 'orm.webp']) if (files.has(`${before.id}/${n}`)) blobs[n] = files.get(`${before.id}/${n}`);
+      albedoMean = before.albedoMean;
+      aspect = (before.tileHeightCm || before.tileCm) / before.tileCm;
+    }
+    let name = photo.name.trim() || k.label;
+    if (asCopy && before && name === before.name) name = `${name} 사본`;
     const def = {
-      id, name: photo.name.trim() || k.label, category: k.category, kind: photo.kind,
+      id, name, category: k.category, kind: photo.kind,
       ...(photo.colorMode === 'tint' ? { palette: photo.kind === 'leather' ? 'leather' : 'fabric' } : {}),
-      colorMode: photo.colorMode, tileCm: +photo.widthCm || k.widthCm,
-      tileHeightCm: +((+photo.widthCm || k.widthCm) * out.height / out.width).toFixed(2),
+      colorMode: photo.colorMode, tileCm: widthCm, tileHeightCm: +(widthCm * aspect).toFixed(2),
       roughness: surf.roughness, metallic: 0, normalScale: +photo.bump.toFixed(2),
       ...(surf.clearcoat ? { clearcoat: surf.clearcoat } : {}),
       ...(k.sheen ? { sheen: { intensity: 0.5, roughness: 0.55 } } : {}),
       maps: { baseColor: `${id}/albedo.webp`, normal: `${id}/normal.webp`, orm: `${id}/orm.webp` },
-      albedoMean: out.albedoMean, source: 'photo', created: new Date().toISOString().slice(0, 10),
-    };
-    const blobs = {
-      'albedo.webp': await canvasBlob(out.albedo, 'image/webp', 0.92),
-      'normal.webp': await canvasBlob(out.normal, 'image/webp', 0.95),
-      'orm.webp': await canvasBlob(out.orm, 'image/webp', 0.9),
+      albedoMean, source: 'photo', created: replacing?.created || new Date().toISOString().slice(0, 10),
+      rev: replacing ? (replacing.rev || 0) + 1 : 0,
+      photo: { contrast: photo.contrast, overlap: photo.overlap, flatten: photo.flatten, bump: photo.bump, gloss: photo.gloss, res: photo.res },
     };
     const record = { id, def, files: blobs, thumb: null, created: Date.now() };
-    addUserMaterial(record);
     await store.saveMaterial(record);
+    if (replacing) {
+      forgetSwatches(id);
+      forgetTextures(`${id}/`);
+    }
+    addUserMaterial(record);
     const g = activeGroup();
-    if (g) {
+    if (replacing) {
+      for (const x of S.groups) if (x.choices.some((c) => c.materialId === id)) updatePreview(x);
+    } else if (g) {
       g.pick = id;
       S.tab = def.category;
       if (def.colorMode === 'photo') { addChoice(g, id, null); updatePreview(g); }
     }
     $('#photoDialog').close();
+    if ($('#libraryDialog').open) renderLibrary();
     refreshAll();
-    toast(`‘${def.name}’ 재질을 저장했어요.${def.colorMode === 'tint' ? ' 이제 색을 골라 주세요.' : ''}`);
+    toast(replacing ? `‘${def.name}’ 재질을 고쳤어요. 이 재질을 쓰는 변형에도 바로 반영돼요.`
+      : `‘${def.name}’ 재질을 저장했어요.${def.colorMode === 'tint' ? ' 이제 색을 골라 주세요.' : ''}`);
   } catch (e) {
     console.error(e);
-    toast(`재질을 만들지 못했어요: ${e.message}`, 6000);
+    toast(`재질을 ${replacing ? '고치지' : '만들지'} 못했어요: ${e.message}`, 6000);
   } finally {
-    $('#photoSave').disabled = false;
+    for (const b of [$('#photoSave'), $('#photoSaveCopy')]) b.disabled = false;
     $('#photoStatus').textContent = '';
   }
 }
 
 function addUserMaterial(record) {
   for (const [name, blob] of Object.entries(record.files)) files.set(`${record.id}/${name}`, blob);
-  userMaterials = [...userMaterials.filter((m) => m.id !== record.id), record.def];
+  const i = userMaterials.findIndex((m) => m.id === record.id);
+  userMaterials = i < 0 ? [...userMaterials, record.def] : userMaterials.map((m, k) => (k === i ? record.def : m));
 }
 
 /** In-page "are you sure?" (the program runs as a local file, so no browser pop-ups). Resolves true on 삭제. */
@@ -1105,7 +1227,8 @@ function renderLibrary() {
     <section class="field"><span class="label">사진으로 만든 재질 (${mats.length})</span>
       <div class="lib-list">${mats.map((m) => `<div class="lib-row"><img data-swatch="${esc(m.id)}|${m.colorMode === 'photo' ? '' : NEUTRAL}" alt="">
         <div class="meta"><b>${esc(m.name)}</b><small>${esc(m.category)} · 가로 ${m.tileCm}cm · ${m.colorMode === 'photo' ? '사진 색' : 'hex로 색칠'}</small></div>
-        <button class="btn ghost small danger" type="button" data-action="lib-del-mat" data-id="${esc(m.id)}">삭제</button></div>`).join('') || '<p class="empty">아직 없어요. 3번 질감 목록의 ‘사진으로 만들기’로 만들 수 있어요.</p>'}</div></section>
+        <div class="row-btns"><button class="btn ghost small" type="button" data-action="mat-edit" data-id="${esc(m.id)}">수정</button>
+        <button class="btn ghost small danger" type="button" data-action="lib-del-mat" data-id="${esc(m.id)}">삭제</button></div></div>`).join('') || '<p class="empty">아직 없어요. 3번 질감 목록의 ‘사진으로 만들기’로 만들 수 있어요.</p>'}</div></section>
     <section class="field"><span class="label">저장한 색 (${S.colors.length})</span>
       <div class="lib-list">${S.colors.map((c, i) => `<div class="lib-row"><i style="background:${c.hex}"></i>
         <div class="meta"><input class="input" data-color-name="${i}" value="${esc(c.name === c.hex ? '' : c.name)}" placeholder="이름 (예: 코냑)"><small class="mono">${c.hex}</small></div>
@@ -1270,6 +1393,8 @@ document.addEventListener('click', async (e) => {
     }
     case 'photo-res': photo.res = +t.dataset.res; renderPhotoFields(); break;
     case 'photo-save': savePhotoMaterial(); break;
+    case 'photo-save-copy': savePhotoMaterial(true); break;
+    case 'mat-edit': e.stopPropagation(); openEditDialog(t.dataset.id); break;
     case 'mat-delete': e.stopPropagation(); if (await askDeleteMaterial(t.dataset.id)) refreshAll(); break;
     case 'lib-del-mat': if (await askDeleteMaterial(t.dataset.id)) { renderLibrary(); refreshAll(); } break;
     case 'lib-del-color': {

@@ -41,7 +41,7 @@ async function tx(store, mode, fn) {
 
 const req = (r) => new Promise((resolve, reject) => { r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); });
 
-/** User materials: { id, def, files: { 'albedo.webp': Blob, ... }, thumb: Blob, created } */
+/** User materials: { id, def, files: { 'albedo.webp': Blob, ..., 'source.jpg': the photo, kept for editing }, thumb: Blob, created } */
 export async function listMaterials() {
   return tx('materials', 'readonly', (s) => (s ? req(s.getAll()) : [...memory.materials.values()]));
 }
@@ -78,6 +78,8 @@ export async function exportLibrary() {
   return new Blob([zipSync(files, { level: 0 })], { type: 'application/zip' });
 }
 
+const mimeOf = (path) => (path.endsWith('.png') ? 'image/png' : /\.jpe?g$/.test(path) ? 'image/jpeg' : 'image/webp');
+
 /** Merge a library .zip into this PC. Returns counts. */
 export async function importLibrary(bytes) {
   const files = unzipSync(new Uint8Array(bytes));
@@ -86,7 +88,7 @@ export async function importLibrary(bytes) {
   for (const def of lib.materials || []) {
     const own = {};
     for (const [path, data] of Object.entries(files))
-      if (path.startsWith(`${def.id}/`) && path !== `${def.id}/thumb.png`) own[path.slice(def.id.length + 1)] = new Blob([data], { type: path.endsWith('.png') ? 'image/png' : 'image/webp' });
+      if (path.startsWith(`${def.id}/`) && path !== `${def.id}/thumb.png`) own[path.slice(def.id.length + 1)] = new Blob([data], { type: mimeOf(path) });
     const thumbData = files[`${def.id}/thumb.png`];
     await saveMaterial({ id: def.id, def, files: own, thumb: thumbData ? new Blob([thumbData], { type: 'image/png' }) : null, created: Date.now() });
     added++;
