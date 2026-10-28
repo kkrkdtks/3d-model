@@ -1,6 +1,7 @@
 // Saved things that belong to this PC: materials made from photos (IndexedDB,
-// because they hold image files) and saved colours / settings (small JSON).
-// Everything can be exported to one .zip and imported on another PC.
+// because they hold image files), saved colours / settings and the work on
+// each model (small JSON). Everything can be exported to one .zip and imported
+// on another PC.
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 
 const DB_NAME = 'furniture-skin-studio';
@@ -63,12 +64,26 @@ export async function setKV(key, value) {
   return tx('kv', 'readwrite', (s) => (s ? req(s.put(value, key)) : memory.kv.set(key, value)));
 }
 
-/** One .zip with the user's materials (same layout as the repo's materials/ folder) and saved colours. */
+/** Every saved value whose key starts with prefix, as { key: value } (e.g. 'work:' = the work on each model). */
+export async function entriesKV(prefix) {
+  return tx('kv', 'readonly', async (s) => {
+    if (!s) return Object.fromEntries([...memory.kv].filter(([k]) => k.startsWith(prefix)));
+    const range = IDBKeyRange.bound(prefix, `${prefix}\uffff`);
+    const [keys, values] = await Promise.all([req(s.getAllKeys(range)), req(s.getAll(range))]);
+    return Object.fromEntries(keys.map((k, i) => [k, values[i]]));
+  });
+}
+
+/**
+ * One .zip with the user's materials (same layout as the repo's materials/ folder), saved colours
+ * and the work saved for each model (so a model continues the same way on another PC).
+ */
 export async function exportLibrary() {
   const mats = await listMaterials();
   const colors = await getKV('colors', []);
+  const works = await entriesKV('work:');
   const files = {};
-  const library = { version: 1, materials: [], colors };
+  const library = { version: 1, materials: [], colors, works };
   for (const m of mats) {
     library.materials.push(m.def);
     for (const [name, blob] of Object.entries(m.files)) files[`${m.id}/${name}`] = new Uint8Array(await blob.arrayBuffer());
@@ -97,5 +112,14 @@ export async function importLibrary(bytes) {
   const known = new Set(have.map((c) => c.hex));
   const newColors = (lib.colors || []).filter((c) => !known.has(c.hex));
   await setKV('colors', [...have, ...newColors]);
-  return { materials: added, colors: newColors.length };
+  // the work on each model: the newer one wins
+  let works = 0;
+  for (const [key, work] of Object.entries(lib.works || {})) {
+    if (!key.startsWith('work:') || !work) continue;
+    const mine = await getKV(key, null);
+    if (mine && (mine.saved || 0) >= (work.saved || 0)) continue;
+    await setKV(key, work);
+    works++;
+  }
+  return { materials: added, colors: newColors.length, works };
 }

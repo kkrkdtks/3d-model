@@ -3,7 +3,7 @@
 //
 // Messages in:  { id, cmd, args }
 // Messages out: { id, ok: true, result } | { id, ok: false, error } | { id, progress: { text, frac } }
-//               | { id, file: { name, bytes } } while exporting
+//               | { id, file: { name, bytes, sizeMm } } while exporting
 import { ImageUtils, WebIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
@@ -128,6 +128,20 @@ async function encodeTexture(bytes, mime, maxSize, { quality = 0.85, type = 'ima
   return { bytes: type === 'image/webp' ? stripWebPProfile(data) : data, mimeType: type };
 }
 
+/** Outer size of a variant in mm: W and D along the furniture axes, H up (the document is in metres by now). */
+function outerSizeMm(doc, axes) {
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (const mesh of doc.getRoot().listMeshes())
+    for (const p of mesh.listPrimitives()) {
+      const pos = p.getAttribute('POSITION');
+      if (!pos) continue;
+      const lo = pos.getMin([]), hi = pos.getMax([]);
+      for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], lo[k]); max[k] = Math.max(max[k], hi[k]); }
+    }
+  const mm = (k) => Math.round((max[k] - min[k]) * 1000);
+  return { w: mm(axes.w), d: mm(axes.d), h: mm(1) };
+}
+
 /**
  * Write one GLB per combination of choices.
  * args: { names, xf, axes, quality: { simplify, keepSimplify }, keptTextureSize, meshopt, compat,
@@ -196,8 +210,9 @@ async function exportVariants(args, progress, sendFile) {
     const bytes = await encodeVariant(io, doc, { meshopt: args.meshopt !== false });
     T.mark(`variant ${i + 1} encode`);
     const name = args.names[i];
-    sendFile({ name, bytes });
-    files.push({ name, size: bytes.byteLength });
+    const sizeMm = outerSizeMm(doc, args.axes);
+    sendFile({ name, bytes, sizeMm });
+    files.push({ name, size: bytes.byteLength, sizeMm });
     made.forEach((m) => m.dispose());
   }
   progress('완료', 1);

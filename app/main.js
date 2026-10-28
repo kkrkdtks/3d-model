@@ -284,6 +284,14 @@ function refreshStyles() {
   renderLegend();
 }
 
+function setCompare(on) {
+  S.compare = !!on;
+  const b = $('[data-action="compare"]');
+  b?.classList.toggle('on', S.compare);
+  b?.setAttribute('aria-pressed', S.compare);
+  refreshStyles();
+}
+
 function renderLegend() {
   const el = $('#legend');
   if (S.view !== 'parts' || !S.parts.length) { el.hidden = true; return; }
@@ -462,6 +470,96 @@ function setActive(key) {
   refreshAll();
 }
 
+// ---------- remembering the work on each model ----------
+
+// Saved per model file (same name and size): opening it again continues with the same groups,
+// materials, colours and sizes. Lives in this PC's browser; the library .zip carries it to another PC.
+const workKey = (f) => `work:${f.name}|${f.size}`;
+// the split the groups were made on: part face counts are exact, so any other split is noticed
+const partSig = () => S.parts.map((p) => p.faces).join(',');
+let workTimer = 0;
+
+function workSnapshot() {
+  return {
+    v: 1, saved: Date.now(),
+    sensitivity: S.segSensitivity, partCount: S.parts.length, partSig: partSig(),
+    size: { ...S.size }, swapped: S.axesSwapped,
+    groups: S.groups.map((g) => ({
+      name: g.name, parts: g.parts, color: g.color, rotate: g.rotate, pick: g.pick,
+      choices: g.choices.map((c) => ({ materialId: c.materialId, color: c.color || null })),
+      active: g.choices.findIndex((c) => c.id === g.active),
+      sizes: g.sizes.map((z) => ({ w: z.w ?? null, d: z.d ?? null })),
+      activeSize: g.sizes.findIndex((z) => z.id === g.activeSize),
+    })),
+    active: S.groups.findIndex((g) => g.key === S.active),
+    quality: S.quality, keptTex: S.keptTex, compat: S.compat, prefix: S.prefix,
+  };
+}
+
+function saveWorkSoon() {
+  if (!S.workKey) return;
+  clearTimeout(workTimer);
+  workTimer = setTimeout(saveWorkNow, 400);
+}
+
+function saveWorkNow() {
+  clearTimeout(workTimer);
+  if (!S.workKey || !S.parts.length) return;
+  store.setKV(S.workKey, workSnapshot()).catch((e) => console.warn('작업을 기억하지 못했어요', e));
+}
+
+/**
+ * Continue the work saved for this model, when it is split into the same parts as then.
+ * Returns { groups, variants, dropped } | { mismatch: true } | null (nothing saved).
+ */
+function restoreWork(work) {
+  if (!work?.groups?.length) return null;
+  if (work.partCount !== S.parts.length || work.partSig !== partSig()) return { mismatch: true };
+  let dropped = 0;
+  for (const w of work.groups) {
+    const parts = (w.parts || []).filter((p) => Number.isInteger(p) && p >= 0 && p < S.parts.length && !groupOfPart(p));
+    if (!parts.length) continue;
+    const choices = [];
+    let active = null;
+    (w.choices || []).forEach((c, i) => {
+      if (!materialById(c.materialId)) { dropped++; return; } // a material deleted since
+      const choice = { id: uid('c'), materialId: c.materialId, color: c.color || null };
+      choices.push(choice);
+      if (i === w.active) active = choice.id;
+    });
+    const sizes = (w.sizes || []).filter((z) => z.w > 0).map((z) => ({ id: uid('z'), w: z.w, d: z.d ?? null }));
+    S.groups.push({
+      key: uid('g'), name: w.name || `그룹 ${S.groups.length + 1}`, parts: parts.sort((a, b) => a - b),
+      color: w.color || GROUP_COLORS[S.groups.length % GROUP_COLORS.length],
+      choices, active: active || choices[choices.length - 1]?.id || null, rotate: w.rotate === 90 ? 90 : 0,
+      skinShown: false, token: 0, pick: materialById(w.pick) ? w.pick : null, sizes, activeSize: sizes[w.activeSize]?.id || null,
+    });
+  }
+  if (!S.groups.length) return null;
+  S.active = S.groups[work.active]?.key || S.groups[0].key;
+  if (QUALITY[work.quality]) S.quality = work.quality;
+  if (work.keptTex === 2048 || work.keptTex === 4096) S.keptTex = work.keptTex;
+  S.compat = !!work.compat;
+  if (work.prefix) S.prefix = work.prefix;
+  const pick = activeGroup()?.pick;
+  if (pick) S.tab = materialById(pick).category;
+  for (const g of S.groups) updatePreview(g);
+  S.resumed = { saved: work.saved };
+  return { groups: S.groups.length, variants: variantPlan().count, dropped };
+}
+
+/** '처음부터 하기': drop the groups and choices of this model (materials and colours stay). */
+async function resetWork() {
+  const ok = await confirmBox('이 모델을 처음부터 다시 할까요?',
+    '만든 그룹과 고른 재질·색·크기가 모두 빠져요. 사진으로 만든 재질과 저장한 색은 그대로 남아요.', '처음부터');
+  if (!ok) return;
+  for (const g of S.groups) viewer.setSkin(g.key, null);
+  Object.assign(S, { groups: [], active: null, selection: new Set(), resumed: null, results: [], resultNote: '' });
+  refreshAll();
+  saveWorkNow();
+  toast('처음부터 시작해요. 바꿀 부분을 클릭해 보세요.');
+}
+
 function similarParts(ids) {
   const sig = (p) => ({ area: p.areaPct, d: [0, 1, 2].map((k) => p.max[k] - p.min[k]).sort((a, b) => a - b) });
   const close = (x, y, tol) => Math.abs(x - y) <= tol * Math.max(x, y, 1e-9);
@@ -622,7 +720,7 @@ function updateSizeHints() {
   const r = realSize();
   for (const [id, k] of [['sizeW', 'w'], ['sizeD', 'd'], ['sizeH', 'h']]) {
     const el = $(`#${id}`);
-    if (el) el.placeholder = k === 'h' && !S.size.h ? '예: 800' : `비율대로 ${fmtInt(r[k])}`;
+    if (el) el.placeholder = k === 'h' && !S.size.h ? '예: 800' : `약 ${fmtInt(r[k])}`;
   }
   $('#sizeH')?.closest('.size-in')?.classList.toggle('missing', !S.size.h);
 }
@@ -636,7 +734,10 @@ function renderParts() {
   }
   el.classList.remove('dim');
   const sel = [...S.selection];
+  const when = S.resumed?.saved ? new Date(S.resumed.saved).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
   el.innerHTML = `${head(2, '바꿀 부분')}
+    ${S.resumed ? `<div class="resume"><span><b>지난번 작업을 이어서 열었어요</b>${when ? `<small>${esc(when)}에 저장한 작업</small>` : ''}</span>
+      <button class="link" type="button" data-action="work-reset">처음부터 하기</button></div>` : ''}
     <p class="hint">3D 화면에서 바꿀 부분을 클릭하세요. <b>Shift</b>를 누른 채 클릭하면 여러 개를 고를 수 있어요.</p>
     ${sel.length ? `<div class="selbar"><strong>선택 ${sel.length}개</strong>
       <button class="btn small" type="button" data-action="group-new">새 그룹으로</button>
@@ -729,6 +830,7 @@ function renderMaterial() {
       </div></div>
     ${sizeArea(g)}`;
   hydrateSwatches(el);
+  saveWorkSoon();
 }
 
 /** Order sizes for one part (a table top in 1600, 1800, 2000 ...): each size is a variant. */
@@ -797,6 +899,8 @@ function renderExport() {
         <button type="button" data-action="kept-tex" data-size="4096" class="${S.keptTex === 4096 ? 'on' : ''}">4K (선명)</button>
         <button type="button" data-action="kept-tex" data-size="2048" class="${S.keptTex === 2048 ? 'on' : ''}">2K (가벼움)</button>
       </div></div>
+    <label class="check"><input type="checkbox" id="photos" ${S.photos ? 'checked' : ''}>
+      <span>제품 사진도 같이 저장<small>변형마다 PNG 한 장을 배경 없이, 지금 3D 화면의 각도로 찍어요. 폴더나 ZIP에는 변형 목록(엑셀에서 여는 CSV)도 같이 들어가요.</small></span></label>
     <label class="check"><input type="checkbox" id="compat" ${S.compat ? 'checked' : ''}>
       <span>호환 모드<small>파일이 공간무드나 다른 프로그램에서 안 열릴 때만 켜세요. 용량이 2~3배 커져요.</small></span></label>
     <div class="field"><label for="prefix">파일 이름 앞부분</label><input class="input" id="prefix" value="${esc(S.prefix)}"></div>
@@ -807,6 +911,7 @@ function renderExport() {
     </div>
     ${S.results.length ? `<div class="files">${S.results.map((r) => `<div class="file-row"><span class="ok">✓</span><span class="fname" title="${esc(r.name)}">${esc(r.name)}</span><span class="fsize">${fmtMB(r.size)}</span></div>`).join('')}</div>
       <p class="note">${esc(S.resultNote)}</p>` : ''}`;
+  saveWorkSoon();
 }
 
 // ---------- export ----------
@@ -822,6 +927,12 @@ async function writeFile(dir, name, bytes) {
   await w.close();
 }
 
+const SAVE_TYPES = {
+  zip: { description: 'ZIP 파일', accept: { 'application/zip': ['.zip'] } },
+  glb: { description: 'GLB 3D 모델', accept: { 'model/gltf-binary': ['.glb'] } },
+  png: { description: 'PNG 사진', accept: { 'image/png': ['.png'] } },
+};
+
 /**
  * Ask where to save BEFORE the long work starts: browsers only open the save dialog right after a click.
  * Returns { dir } | { file } | { download } (plain browser download) | null when the user cancelled.
@@ -832,8 +943,8 @@ async function pickTarget(kind, suggestedName) {
   try {
     if (kind === 'folder' && window.showDirectoryPicker) return { dir: await window.showDirectoryPicker({ id: 'skin-studio-out', mode: 'readwrite' }) };
     if (window.showSaveFilePicker) {
-      const zip = suggestedName.endsWith('.zip');
-      const types = [zip ? { description: 'ZIP 파일', accept: { 'application/zip': ['.zip'] } } : { description: 'GLB 3D 모델', accept: { 'model/gltf-binary': ['.glb'] } }];
+      const ext = suggestedName.split('.').pop().toLowerCase();
+      const types = [SAVE_TYPES[ext] || SAVE_TYPES.glb];
       return { file: await window.showSaveFilePicker({ id: 'skin-studio-out', suggestedName, types }) };
     }
   } catch (e) {
@@ -876,14 +987,16 @@ async function runExport(kind) {
   const q = QUALITY[S.quality];
   const base = S.prefix || S.file.base;
   const groups = compressOnly ? [] : active.map((g) => ({ key: g.key, name: g.name, parts: g.parts }));
-  const variants = compressOnly ? [[]] : cartesian(active.map((g) => optionsOf(g).map(({ choice, size }) => {
+  // every combination: one option (a material or the original look, × a size) per group
+  const plan = compressOnly ? [[]] : cartesian(active.map((g) => optionsOf(g).map((o) => ({ g, ...o }))));
+  const variants = plan.map((combo) => combo.map(({ g, choice, size }) => {
     let def = null; // null keeps the original look (size-only option)
     if (choice) {
       const { builtin: _b, ...rest } = materialById(choice.materialId);
       def = rest;
     }
     return { group: g.key, def, color: choice?.color || null, rotate: g.rotate, size: size ? { w: size.w, d: size.d } : null };
-  })));
+  }));
   const used = new Set();
   const names = variants.map((v) => {
     let n = variantName(base, v);
@@ -891,7 +1004,10 @@ async function runExport(kind) {
     used.add(n);
     return n;
   });
-  const single = names.length === 1;
+  // a product photo per variant and the list of variants come along (not with the plain compressed copy)
+  const photoNames = !compressOnly && S.photos ? names.map((n) => n.replace(/\.glb$/, '.png')) : null;
+  const single = names.length === 1 && !photoNames;
+  const listName = `${safeName(base)}_변형목록.csv`;
   const zipName = `${safeName(base)}_변형${names.length}개.zip`;
   const target = await pickTarget(kind === 'folder' ? 'folder' : 'file', single ? names[0] : zipName);
   if (!target) return;
@@ -901,8 +1017,16 @@ async function runExport(kind) {
   S.resultNote = '';
   renderExport();
   const t0 = performance.now();
-  const zipFiles = {}, writes = [];
+  const zipFiles = {}, writes = [], made = [];
+  const put = (name, bytes) => {
+    if (target.dir) writes.push(writeFile(target.dir, name, bytes));
+    else zipFiles[name] = bytes;
+  };
+  let shots = 0;
   try {
+    if (photoNames) {
+      shots = await takePhotos(plan, async (i, blob) => put(photoNames[i], new Uint8Array(await blob.arrayBuffer())));
+    }
     busy('준비 중', 0);
     const textures = {};
     for (const v of variants)
@@ -917,12 +1041,13 @@ async function runExport(kind) {
       onProgress: (p) => busy(p.text, p.frac),
       onFile: (f) => {
         S.results.push({ name: f.name, size: f.bytes.byteLength });
+        made[names.indexOf(f.name)] = { size: f.bytes.byteLength, sizeMm: f.sizeMm };
         renderExport();
-        if (target.dir) writes.push(writeFile(target.dir, f.name, f.bytes));
-        else zipFiles[f.name] = new Uint8Array(f.bytes);
+        put(f.name, new Uint8Array(f.bytes));
       },
     });
     console.info('내보내기 시간(ms)', JSON.stringify(res.timings));
+    if (!single && !compressOnly) put(listName, new TextEncoder().encode(variantCsv(plan, names, photoNames, made)));
     await Promise.all(writes);
     if (!target.dir) {
       busy('파일 저장 중', 1);
@@ -932,7 +1057,8 @@ async function runExport(kind) {
     const total = S.results.reduce((a, r) => a + r.size, 0);
     const secs = Math.max(1, Math.round((performance.now() - t0) / 1000));
     const where = target.dir ? `‘${target.dir.name}’ 폴더에 저장했어요` : target.file ? `‘${target.file.name}’로 저장했어요` : '다운로드 폴더를 확인하세요';
-    S.resultNote = `${S.results.length}개 · 모두 ${fmtMB(total)} (원본 ${fmtMB(S.file.size)}) · ${secs}초 · ${where}`;
+    const extras = [shots ? `제품 사진 ${shots}장` : '', !single && !compressOnly ? '변형 목록(CSV)' : ''].filter(Boolean).join(', ');
+    S.resultNote = `${S.results.length}개 · 모두 ${fmtMB(total)} (원본 ${fmtMB(S.file.size)}) · ${secs}초${extras ? ` · ${extras}도 함께` : ''} · ${where}`;
     toast(where);
   } catch (e) {
     console.error(e);
@@ -941,6 +1067,85 @@ async function runExport(kind) {
     S.exporting = false;
     idle();
     renderExport();
+  }
+}
+
+/**
+ * Product photo of every variant: each combination is put on the 3D view in turn and photographed
+ * from the current direction. The panel is locked meanwhile so nothing changes under the camera.
+ * Returns how many photos were taken (a failure keeps the GLB export going).
+ */
+async function takePhotos(plan, onPhoto) {
+  const keep = { view: S.view, hover: S.hover, compare: S.compare, picks: S.groups.map((g) => [g, g.active, g.activeSize]) };
+  Object.assign(S, { view: 'material', hover: -1, compare: false });
+  document.body.classList.add('shooting');
+  let n = 0;
+  try {
+    for (let i = 0; i < plan.length; i++) {
+      busy(`제품 사진 찍는 중 ${i + 1}/${plan.length}`, i / plan.length);
+      for (const { g, choice, size } of plan[i]) { g.active = choice?.id || null; g.activeSize = size?.id || null; }
+      await Promise.all(plan[i].map(({ g }) => updatePreview(g)));
+      const blob = await viewer.snapshot(PHOTO);
+      if (blob) { await onPhoto(i, blob); n++; }
+    }
+  } catch (e) {
+    console.error(e);
+    toast(`제품 사진을 다 찍지 못했어요: ${e.message}`, 6000);
+  } finally {
+    for (const [g, active, activeSize] of keep.picks) { g.active = active; g.activeSize = activeSize; }
+    Object.assign(S, { view: keep.view, hover: keep.hover });
+    document.body.classList.remove('shooting');
+    await Promise.all(S.groups.map((g) => updatePreview(g)));
+    setCompare(keep.compare);
+  }
+  return n;
+}
+
+/** The list of variants for Excel: one row per file with what each group got (UTF-8 with BOM so Excel reads Korean). */
+function variantCsv(plan, names, photoNames, made) {
+  const groups = plan[0].map(({ g }) => g);
+  const head = ['번호', 'GLB 파일', ...(photoNames ? ['사진 파일'] : []), 'W(mm)', 'D(mm)', 'H(mm)'];
+  for (const g of groups) head.push(`${g.name} 재질`, `${g.name} 색 이름`, `${g.name} 색 코드`, ...(g.sizes.length ? [`${g.name} 크기(mm)`] : []));
+  head.push('용량(MB)');
+  const rows = plan.map((combo, i) => {
+    const f = made[i];
+    const row = [i + 1, names[i], ...(photoNames ? [photoNames[i]] : []), f?.sizeMm?.w ?? '', f?.sizeMm?.d ?? '', f?.sizeMm?.h ?? ''];
+    for (const { g, choice, size } of combo) {
+      const def = choice ? materialById(choice.materialId) : null;
+      const c = choice?.color;
+      row.push(def?.name || '원본 그대로', def?.colorMode === 'photo' ? '사진 색' : c?.name && c.name !== c.hex ? c.name : '', c?.hex || '');
+      if (g.sizes.length) row.push(size ? sizeLabel(size, groupSizeMm(g)) : '');
+    }
+    row.push(f ? (f.size / 1048576).toFixed(1) : '');
+    return row;
+  });
+  const cell = (v) => { const s = String(v ?? ''); return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  return `﻿${[head, ...rows].map((r) => r.map(cell).join(',')).join('\r\n')}\r\n`;
+}
+
+/** '사진 저장': the 3D view as it is now (as in 재질 보기), a PNG without background or helper lines. */
+async function savePhoto() {
+  if (!S.info || S.exporting) return;
+  const base = S.prefix || S.file.base;
+  const shown = S.groups.filter((g) => g.skinShown).map((g) => {
+    const choice = g.choices.find((c) => c.id === g.active);
+    return { group: g.key, def: choice ? materialById(choice.materialId) : null, color: choice?.color || null, size: activeSize(g) };
+  });
+  const name = S.compare ? `${safeName(base)}_원본.png` : shown.length ? variantName(base, shown).replace(/\.glb$/, '.png') : `${safeName(base)}.png`;
+  const target = await pickTarget('file', name);
+  if (!target) return;
+  const keep = { view: S.view, hover: S.hover };
+  Object.assign(S, { view: 'material', hover: -1 });
+  refreshStyles();
+  try {
+    await saveTo(target, name, await viewer.snapshot(PHOTO));
+    toast(target.file ? `‘${target.file.name}’로 저장했어요.` : '사진을 저장했어요. 다운로드 폴더를 확인하세요.');
+  } catch (e) {
+    console.error(e);
+    toast(`사진을 저장하지 못했어요: ${e.message}`, 6000);
+  } finally {
+    Object.assign(S, keep);
+    refreshStyles();
   }
 }
 
@@ -1282,13 +1487,20 @@ function rememberColors(hexes) {
 
 // ---------- events ----------
 
+const SHOW_CHOICE = new Set(['mat-pick', 'photo-toggle', 'color-toggle', 'hex-add', 'choice-preview', 'size-add', 'size-add-current', 'size-preview', 'rotate']);
+
 document.addEventListener('click', async (e) => {
   const t = e.target.closest('[data-action]');
   if (!t) return;
   const a = t.dataset.action;
   const g = activeGroup();
+  // picking a material or a size means wanting to see it, not the original
+  if (S.compare && SHOW_CHOICE.has(a)) setCompare(false);
   switch (a) {
     case 'open-file': $('#fileInput').click(); break;
+    case 'compare': setCompare(!S.compare); break;
+    case 'save-photo': savePhoto(); break;
+    case 'work-reset': resetWork(); break;
     case 'open-library': renderLibrary(); $('#libraryDialog').showModal(); break;
     case 'view':
       S.view = t.dataset.view;
@@ -1479,7 +1691,7 @@ document.addEventListener('input', (e) => {
       clearTimeout(t._t);
       t._t = setTimeout(() => { renderExport(); renderLegend(); }, 300);
     }
-  } else if (t.id === 'prefix') S.prefix = t.value.trim();
+  } else if (t.id === 'prefix') { S.prefix = t.value.trim(); saveWorkSoon(); }
   else if (t.id === 'sensitivity') { S.sensitivity = +t.value; S.confirmReseg = false; }
   else if (t.dataset.colorName !== undefined) {
     const c = S.colors[+t.dataset.colorName];
@@ -1496,7 +1708,8 @@ document.addEventListener('change', async (e) => {
   const t = e.target;
   if (t.id === 'fileInput') { openFile(t.files[0]); t.value = ''; }
   else if (t.id === 'sizeW' || t.id === 'sizeD' || t.id === 'sizeH') { applySize(); renderMaterial(); renderExport(); }
-  else if (t.id === 'compat') S.compat = t.checked;
+  else if (t.id === 'compat') { S.compat = t.checked; saveWorkSoon(); }
+  else if (t.id === 'photos') { S.photos = t.checked; store.setKV('prefs', { photos: S.photos }); }
   else if (t.id === 'photoInput') { loadPhoto(t.files[0]); t.value = ''; }
   else if (t.id === 'pFlatten') { photo.flatten = t.checked; schedulePhotoPreview(); }
   else if (t.name === 'pcolor') { photo.colorMode = t.value; schedulePhotoPreview(); }
@@ -1510,10 +1723,14 @@ document.addEventListener('change', async (e) => {
       S.colors = await store.getKV('colors', []);
       renderLibrary();
       refreshAll();
-      toast(`재질 ${r.materials}개, 색 ${r.colors}개를 가져왔어요.`);
+      toast(`재질 ${r.materials}개, 색 ${r.colors}개${r.works ? `, 모델 작업 기록 ${r.works}개` : ''}를 가져왔어요.`);
     }).catch((err) => toast(`가져오지 못했어요: ${err.message}`, 6000));
   }
 });
+
+// the debounced save may not get to run once the window closes
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveWorkNow(); });
+window.addEventListener('pagehide', saveWorkNow);
 
 // keep "부분이 잘 안 나뉘었나요?" open while trying several sensitivities ('toggle' does not bubble)
 document.addEventListener('toggle', (e) => { if (e.target.matches?.('details.more')) S.moreOpen = e.target.open; }, true);
@@ -1551,6 +1768,7 @@ bindDrop($('#photoDrop'), loadPhoto);
   }
   try {
     S.colors = await store.getKV('colors', []);
+    S.photos = (await store.getKV('prefs', {}))?.photos ?? true;
     for (const m of await store.listMaterials()) addUserMaterial(m);
   } catch (e) {
     console.warn('저장된 재질을 읽지 못했어요', e);
@@ -1559,4 +1777,4 @@ bindDrop($('#photoDrop'), loadPhoto);
   refreshAll();
 })();
 
-window.__studio = { S, openFile, runExport, viewer, newGroup, addChoice, updatePreview, setActive, call };
+window.__studio = { S, openFile, runExport, viewer, newGroup, addChoice, updatePreview, setActive, call, saveWorkNow, setCompare };

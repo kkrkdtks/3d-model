@@ -28,7 +28,10 @@
         </div>
         <button class="btn ghost small" type="button" data-action="reset-view">시점 처음으로</button>
         <button class="btn ghost small toggle on" type="button" data-action="dims" aria-pressed="true" title="W·D·H 치수선 보이기/숨기기">치수</button>
+        <button class="btn ghost small toggle" type="button" data-action="compare" aria-pressed="false" title="바꾸기 전 원본과 번갈아 보기">원본 보기</button>
+        <button class="btn ghost small" type="button" data-action="save-photo" title="지금 보이는 모습을 배경 없는 PNG로 저장">사진 저장</button>
       </div>
+      <div class="stage-badge" id="compareBadge" hidden>원본 (바꾸기 전)</div>
       <div class="legend" id="legend" hidden></div>
       <div class="tip" id="tip" hidden></div>
       <div class="drop" id="drop">
@@ -96,7 +99,7 @@
     </header>
     <div id="libraryBody"></div>
     <footer class="dialog-foot">
-      <span class="note">다른 PC로 옮길 때는 내보낸 .zip 파일을 그 PC에서 가져오면 돼요.</span>
+      <span class="note">재질·색과 모델별 작업 기록이 .zip 하나에 담겨요. 다른 PC에서 가져오기 하면 그대로 이어져요.</span>
       <button class="btn ghost" type="button" data-action="lib-import">가져오기</button>
       <button class="btn" type="button" data-action="lib-export">내보내기 (.zip)</button>
       <input type="file" id="libInput" accept=".zip" hidden>
