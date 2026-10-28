@@ -544,9 +544,69 @@ export class Viewer {
     return Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
   }
 
-  /** PNG of the current view (for thumbnails or sharing a look). */
-  async snapshot(type = 'image/png') {
-    this.renderer.render(this.scene, this.camera);
-    return new Promise((res) => this.renderer.domElement.toBlob(res, type));
+  /**
+   * Product photo of what is shown: transparent background, no selection colours or dimension
+   * lines, seen from the current direction and framed around the furniture and its floor shadow.
+   * Resolves a PNG Blob of width × height pixels.
+   */
+  async snapshot({ width = 1600, height = 1200, margin = 0.05 } = {}) {
+    if (!this.model) return null;
+    const box = this.bounds();
+    if (box.isEmpty()) return null;
+    this.placeShadow(box);
+    this.shadow.updateMatrixWorld();
+    const center = box.getCenter(new THREE.Vector3());
+    const radius = box.getSize(new THREE.Vector3()).length() / 2;
+    const cam = this.camera.clone();
+    cam.aspect = width / height;
+    cam.clearViewOffset();
+    const half = THREE.MathUtils.degToRad(cam.fov / 2);
+    const dist = (radius / Math.sin(Math.min(half, Math.atan(Math.tan(half) * cam.aspect)))) * 1.05;
+    const dir = new THREE.Vector3().subVectors(this.camera.position, this.controls.target).normalize();
+    cam.position.copy(center).addScaledVector(dir, dist);
+    cam.near = dist / 100;
+    cam.far = dist * 20;
+    cam.lookAt(center);
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld();
+    // where the box corners and the visible part of the shadow land in that camera's picture
+    const pts = [];
+    for (let i = 0; i < 8; i++) pts.push(new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z));
+    for (let a = 0; a < 32; a++) {
+      const t = (a / 32) * Math.PI * 2; // the shadow fades out at 0.5; past 0.47 it is under 3%
+      pts.push(new THREE.Vector3(Math.cos(t) * 0.47, Math.sin(t) * 0.47, 0).applyMatrix4(this.shadow.matrixWorld));
+    }
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const p of pts) {
+      p.project(cam);
+      x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y);
+    }
+    // crop the picture to that rectangle plus the margin, at full resolution (no resampling)
+    const fill = 1 - 2 * margin;
+    const fullW = Math.min((2 * width * fill) / (x1 - x0), (2 * height * fill * cam.aspect) / (y1 - y0));
+    const fullH = fullW / cam.aspect;
+    const cx = (((x0 + x1) / 2 + 1) / 2) * fullW, cy = ((1 - (y0 + y1) / 2) / 2) * fullH;
+    cam.setViewOffset(fullW, fullH, cx - width / 2, cy - height / 2, width, height);
+
+    const r = this.renderer;
+    const prevSize = r.getSize(new THREE.Vector2()), prevRatio = r.getPixelRatio();
+    const helpers = [this.dimGroup, this.overlay].filter((o) => o?.visible);
+    const out = document.createElement('canvas');
+    out.width = width;
+    out.height = height;
+    try {
+      for (const o of helpers) o.visible = false;
+      r.setPixelRatio(1);
+      r.setSize(width, height, false);
+      r.render(this.scene, cam);
+      // copy before the browser shows the frame (the drawing buffer is not kept)
+      out.getContext('2d').drawImage(r.domElement, 0, 0);
+    } finally {
+      for (const o of helpers) o.visible = true;
+      r.setPixelRatio(prevRatio);
+      r.setSize(prevSize.x, prevSize.y, false);
+      this.dirty = true;
+    }
+    return new Promise((res, rej) => out.toBlob((b) => (b ? res(b) : rej(new Error('사진을 만들지 못했어요.'))), 'image/png'));
   }
 }

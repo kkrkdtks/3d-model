@@ -51,15 +51,21 @@ const QUALITY = {
   standard: { label: '표준', simplify: 0.25, keepSimplify: 0.35, note: '보통 거리에서는 원본과 구별이 안 돼요. 추천해요.' },
   light: { label: '가볍게', simplify: 0.12, keepSimplify: 0.2, note: '가장 작아요. 아주 가까이 보면 둥근 곳이 조금 단순해져요.' },
 };
+// boundary sensitivity the worker splits with when a file opens (threshold 165 − 105 = 60)
+const DEFAULT_SENSITIVITY = 105;
+// product photos: 4:3, big enough for a catalogue page
+const PHOTO = { width: 1600, height: 1200 };
 
 // ---------- state ----------
 
 const S = {
   file: null, info: null, parts: [], faceLabels: null, welded: null, dims: null, segKey: 0,
-  size: { w: null, d: null, h: null }, axes: { w: 2, d: 0, front: 1 }, axesSwapped: false, dimsOn: true, sensitivity: 105,
-  selection: new Set(), groups: [], active: null, view: 'material', hover: -1,
-  tab: '가죽', quality: 'standard', keptTex: 4096, compat: false, prefix: '',
+  size: { w: null, d: null, h: null }, axes: { w: 2, d: 0, front: 1 }, axesSwapped: false, dimsOn: true,
+  sensitivity: DEFAULT_SENSITIVITY, segSensitivity: DEFAULT_SENSITIVITY,
+  selection: new Set(), groups: [], active: null, view: 'material', hover: -1, compare: false,
+  tab: '가죽', quality: 'standard', keptTex: 4096, compat: false, prefix: '', photos: true,
   colors: [], results: [], resultNote: '', exporting: false, confirmReseg: false, moreOpen: false,
+  workKey: null, resumed: null,
 };
 const activeGroup = () => S.groups.find((g) => g.key === S.active) || null;
 const groupOfPart = (i) => S.groups.find((g) => g.parts.includes(i)) || null;
@@ -244,6 +250,9 @@ function onPick(id, { add }) {
 function refreshStyles() {
   if (!S.parts.length) return;
   const hoverGroup = S.hover >= 0 ? groupOfPart(S.hover) : null;
+  // '원본 보기': the model as it came, to compare with the chosen materials and sizes
+  const compare = S.compare && S.view === 'material';
+  $('#compareBadge').hidden = !compare;
   const styles = S.parts.map((_, i) => {
     const g = groupOfPart(i);
     const sel = S.selection.has(i);
@@ -254,7 +263,7 @@ function refreshStyles() {
       if (hov) overlay = overlay ? { color: overlay.color, opacity: 0.88 } : { color: '#ffffff', opacity: 0.5 };
       return { base: 'clay', overlay };
     }
-    const skinned = !!(g && g.skinShown);
+    const skinned = !!(g && g.skinShown) && !compare;
     let overlay = null;
     if (sel) overlay = { color: SEL_COLOR, opacity: 0.5 };
     else if (hov && !skinned) overlay = { color: '#ffffff', opacity: 0.3 };
@@ -262,8 +271,8 @@ function refreshStyles() {
   });
   viewer.setPartStyles(styles);
   for (const g of S.groups) {
-    viewer.setSkinVisible(g.key, S.view === 'material' && g.skinShown);
-    viewer.setSkinHighlight(g.key, S.view === 'material' && hoverGroup === g);
+    viewer.setSkinVisible(g.key, S.view === 'material' && g.skinShown && !compare);
+    viewer.setSkinHighlight(g.key, S.view === 'material' && !compare && hoverGroup === g);
   }
   // the dimension lines measure what is shown: original parts that are not replaced + the replacements
   const shown = styles.map((st, i) => (st.base === 'hidden' ? -1 : i)).filter((i) => i >= 0);
@@ -293,12 +302,24 @@ async function openFile(file) {
   const tOpen = performance.now();
   busy('파일 읽는 중', 0.02);
   try {
+    // the model open until now keeps its latest changes; nothing is remembered until this one is ready
+    saveWorkNow();
+    S.workKey = null;
     const buf = await file.arrayBuffer();
     const copy = buf.slice(0);
     const tRead = performance.now();
     const analysis = call('open', { bytes: copy }, { transfer: [copy], onProgress: (p) => busy(p.text, p.frac * 0.85) });
     const res = await analysis;
     const tWork = performance.now();
+    // the work saved for this model last time: split it the same way so its groups fit again
+    const key = workKey(file);
+    const work = await store.getKV(key, null).catch(() => null);
+    const sensitivity = work?.sensitivity ?? DEFAULT_SENSITIVITY;
+    let seg = { parts: res.parts, faceLabels: res.faceLabels };
+    if (sensitivity !== DEFAULT_SENSITIVITY) {
+      busy('지난번처럼 부분 나누는 중', 0.87);
+      seg = await call('segment', { threshold: 165 - sensitivity });
+    }
     busy('화면 준비 중', 0.9);
     const tView = performance.now();
     await viewer.loadModel(buf, res.info.indexCount);
@@ -306,29 +327,37 @@ async function openFile(file) {
     for (const g of S.groups) viewer.setSkin(g.key, null);
     Object.assign(S, {
       file: { name: file.name, size: file.size, base: file.name.replace(/\.glb$/i, '') },
-      info: res.info, parts: res.parts, faceLabels: res.faceLabels, welded: res.welded,
+      info: res.info, parts: seg.parts, faceLabels: seg.faceLabels, welded: res.welded, sensitivity, segSensitivity: sensitivity,
       dims: { x: res.info.bbox.max[0] - res.info.bbox.min[0], y: res.info.bbox.max[1] - res.info.bbox.min[1], z: res.info.bbox.max[2] - res.info.bbox.min[2] },
       selection: new Set(), groups: [], active: null, hover: -1, results: [], resultNote: '', segKey: S.segKey + 1, confirmReseg: false,
+      resumed: null,
     });
+    setCompare(false);
     S.prefix = S.file.base;
-    const saved = await store.getKV(`size:${file.name}`, null);
+    const saved = work?.size ? { ...work.size, swapped: work.swapped } : await store.getKV(`size:${file.name}`, null);
     const legacyW = saved ? null : await store.getKV(`width:${file.name}`, null);
     S.size = { w: saved?.w ?? legacyW ?? null, d: saved?.d ?? null, h: saved?.h ?? null };
     S.axesSwapped = !!saved?.swapped;
     S.axes = S.axesSwapped ? swapAxes(res.axes) : res.axes;
     previewCache.clear();
     const tParts = performance.now();
-    viewer.setParts(res.welded.pos, res.welded.index, res.faceLabels, res.parts.length);
+    viewer.setParts(res.welded.pos, res.welded.index, seg.faceLabels, seg.parts.length);
     viewer.setAxes(S.axes);
     viewer.setOutputTransform(currentXf());
+    const resumed = restoreWork(work);
     viewer.frame();
     console.info('열기 단계(ms)', JSON.stringify({ read: Math.round(tRead - tOpen), worker: Math.round(tWork - tRead), view: Math.round(tParts - tWork), parts: Math.round(performance.now() - tParts) }));
     $('#drop').hidden = true;
     $('#stageTools').hidden = false;
     $('#fileMeta').innerHTML = `<b>${esc(file.name)}</b> · ${fmtMB(file.size)}`;
+    S.workKey = key;
     refreshAll();
     renderInfo();
-    toast(`부분 ${res.parts.length}개로 나눴어요. 바꿀 부분을 클릭해 보세요.`);
+    if (resumed?.groups) {
+      toast(`지난번 작업을 이어서 열었어요. 그룹 ${resumed.groups}개${resumed.variants ? ` · 변형 ${resumed.variants}개` : ''}${resumed.dropped ? ` (지운 재질로 고른 ${resumed.dropped}개는 뺐어요)` : ''}`, 6000);
+    } else if (resumed?.mismatch) {
+      toast('지난번 작업이 있지만 부분이 다르게 나뉘어서 불러오지 못했어요. 바꿀 부분을 다시 골라 주세요.', 7000);
+    } else toast(`부분 ${seg.parts.length}개로 나눴어요. 바꿀 부분을 클릭해 보세요.`);
     console.info('열기 전체(ms)', Math.round(performance.now() - tOpen));
   } catch (e) {
     console.error(e);
@@ -344,7 +373,10 @@ async function resegment() {
     const threshold = 165 - S.sensitivity;
     const res = await call('segment', { threshold });
     for (const g of S.groups) viewer.setSkin(g.key, null);
-    Object.assign(S, { parts: res.parts, faceLabels: res.faceLabels, selection: new Set(), groups: [], active: null, segKey: S.segKey + 1, confirmReseg: false });
+    Object.assign(S, {
+      parts: res.parts, faceLabels: res.faceLabels, selection: new Set(), groups: [], active: null, segKey: S.segKey + 1, confirmReseg: false,
+      segSensitivity: S.sensitivity, resumed: null,
+    });
     previewCache.clear();
     viewer.setParts(S.welded.pos, S.welded.index, res.faceLabels, res.parts.length);
     refreshAll();
