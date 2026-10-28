@@ -309,9 +309,11 @@ async function openFile(file) {
   if (!/\.glb$/i.test(file.name)) { toast('GLB 파일(.glb)만 열 수 있어요.'); return; }
   const tOpen = performance.now();
   busy('파일 읽는 중', 0.02);
+  let prev = null;
   try {
     // the model open until now keeps its latest changes; nothing is remembered until this one is ready
     saveWorkNow();
+    prev = { file: S.file, key: S.workKey };
     S.workKey = null;
     const buf = await file.arrayBuffer();
     const copy = buf.slice(0);
@@ -369,6 +371,8 @@ async function openFile(file) {
     console.info('열기 전체(ms)', Math.round(performance.now() - tOpen));
   } catch (e) {
     console.error(e);
+    // the model still on screen keeps being remembered
+    if (prev && S.file === prev.file) S.workKey = prev.key;
     toast(`파일을 열지 못했어요: ${e.message}`, 7000);
   } finally {
     idle();
