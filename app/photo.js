@@ -3,12 +3,14 @@
 // seamlessly, and derive bump (normal) and gloss (roughness) maps from it.
 import { stripWebPProfile } from './webp.js';
 
+// contrast: how strongly the photo's light/dark pattern shows. Leather and fabric photos carry
+// close-up shading that looks harsh when repeated over a whole sofa, so they start soft.
 export const KINDS = {
-  marble: { label: '대리석', category: '대리석', colorMode: 'photo', widthCm: 60, bump: 0.2, gloss: 0.85 },
-  wood: { label: '나무', category: '나무', colorMode: 'photo', widthCm: 40, bump: 0.6, gloss: 0.35 },
-  fabric: { label: '원단', category: '패브릭', colorMode: 'tint', widthCm: 10, bump: 1, gloss: 0, sheen: true },
-  leather: { label: '가죽', category: '가죽', colorMode: 'tint', widthCm: 15, bump: 0.8, gloss: 0.35 },
-  other: { label: '기타', category: '기타', colorMode: 'photo', widthCm: 50, bump: 0.4, gloss: 0.3 },
+  marble: { label: '대리석', category: '대리석', colorMode: 'photo', widthCm: 60, bump: 0.2, gloss: 0.85, contrast: 1 },
+  wood: { label: '나무', category: '나무', colorMode: 'photo', widthCm: 40, bump: 0.6, gloss: 0.35, contrast: 1 },
+  fabric: { label: '원단', category: '패브릭', colorMode: 'tint', widthCm: 10, bump: 0.9, gloss: 0, sheen: true, contrast: 0.6 },
+  leather: { label: '가죽', category: '가죽', colorMode: 'tint', widthCm: 15, bump: 0.5, gloss: 0.35, contrast: 0.4 },
+  other: { label: '기타', category: '기타', colorMode: 'photo', widthCm: 50, bump: 0.4, gloss: 0.3, contrast: 1 },
 };
 
 const toLin = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
@@ -89,7 +91,7 @@ function toCanvas(w, h, fill) {
 
 /**
  * Process a photo. src: ImageBitmap. size: longest side of the finished tile.
- * o: { kind, colorMode, overlap 0..0.4, flatten, bump 0..2, gloss 0..1 }
+ * o: { kind, colorMode, overlap 0..0.4, flatten, bump 0..2, gloss 0..1, contrast 0..1.5 }
  * Returns canvases + numbers needed for the material definition.
  */
 export async function processPhoto(src, o, size = 1024) {
@@ -105,11 +107,12 @@ export async function processPhoto(src, o, size = 1024) {
   let ch = [new Float32Array(n), new Float32Array(n), new Float32Array(n)];
   for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) ch[k][i] = LUT[px[i * 4 + k]];
 
-  // 1) even out lighting: divide by a very blurred brightness
+  // 1) even out lighting: divide by a very blurred brightness. Hex-tinted materials (leather, fabric)
+  //    also lose the larger blotches, which would repeat as a pattern across a sofa: only the grain stays.
   if (o.flatten !== false) {
     const lum = new Float32Array(n);
     for (let i = 0; i < n; i++) lum[i] = 0.2126 * ch[0][i] + 0.7152 * ch[1][i] + 0.0722 * ch[2][i];
-    const low = blur(lum, w, h, Math.min(w, h) / 8);
+    const low = blur(lum, w, h, Math.min(w, h) / (o.colorMode === 'tint' ? 20 : 8));
     const mean = lum.reduce((s, v) => s + v, 0) / n;
     for (let i = 0; i < n; i++) {
       const f = mean / Math.max(low[i], 1e-4);
@@ -126,14 +129,15 @@ export async function processPhoto(src, o, size = 1024) {
   for (let i = 0; i < m; i++) lum[i] = Math.max(0, 0.2126 * ch[0][i] + 0.7152 * ch[1][i] + 0.0722 * ch[2][i]);
   const lumMean = lum.reduce((s, v) => s + v, 0) / m || 1;
 
-  // 3) colour map: photo colours, or neutral grey for hex tinting
+  // 3) colour map: photo colours, or neutral grey for hex tinting; contrast softens or deepens the pattern
+  const c = Math.max(0, o.contrast ?? 1);
   let albedoMean = 1;
   let albedo;
   if (o.colorMode === 'tint') {
     const target = 0.75;
     let sum = 0;
     const gray = new Float32Array(m);
-    for (let i = 0; i < m; i++) { gray[i] = Math.min(1, (lum[i] / lumMean) * target); sum += gray[i]; }
+    for (let i = 0; i < m; i++) { gray[i] = Math.min(1, Math.max(0.02, target * (1 + c * (lum[i] / lumMean - 1)))); sum += gray[i]; }
     albedoMean = +(sum / m).toFixed(4);
     albedo = toCanvas(W, H, (d) => {
       for (let i = 0; i < m; i++) {
@@ -142,9 +146,10 @@ export async function processPhoto(src, o, size = 1024) {
       }
     });
   } else {
+    const means = ch.map((x) => x.reduce((a, v) => a + v, 0) / m);
     albedo = toCanvas(W, H, (d) => {
       for (let i = 0; i < m; i++) {
-        for (let k = 0; k < 3; k++) d[i * 4 + k] = Math.round(toSrgb(Math.min(1, Math.max(0, ch[k][i]))) * 255);
+        for (let k = 0; k < 3; k++) d[i * 4 + k] = Math.round(toSrgb(Math.min(1, Math.max(0, means[k] + c * (ch[k][i] - means[k])))) * 255);
         d[i * 4 + 3] = 255;
       }
     });
@@ -188,6 +193,44 @@ export async function processPhoto(src, o, size = 1024) {
   });
 
   return { albedo, normal, orm, width: W, height: H, albedoMean };
+}
+
+const pixelsOf = (canvas) => canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+
+/**
+ * Lit 2×2 tiling of a processed photo, so bump and gloss can be judged before saving.
+ * tint: sRGB hex used for hex-tinted materials (an example colour). Draws into ctx at (x, y, w, h).
+ */
+export function drawLitTiles(ctx, out, { tint = null, bump = 1, gloss = 0.3 }, x0, y0, w, h) {
+  const tw = out.width, th = out.height;
+  const alb = pixelsOf(out.albedo), nrm = pixelsOf(out.normal);
+  const img = ctx.createImageData(Math.round(w), Math.round(h));
+  const d = img.data, W = img.width, Hh = img.height;
+  const t = tint ? [1, 3, 5].map((i) => toLin(parseInt(tint.slice(i, i + 2), 16) / 255) / (out.albedoMean || 1)) : [1, 1, 1];
+  const L = [-0.5, 0.62, 0.6], ll = Math.hypot(...L);
+  const Hv = [L[0] / ll, L[1] / ll, L[2] / ll + 1], hl = Math.hypot(...Hv);
+  const shin = 8 + 140 * gloss, ks = 0.03 + 0.35 * gloss;
+  for (let y = 0; y < Hh; y++)
+    for (let x = 0; x < W; x++) {
+      const sx = Math.floor(((x / W) * 2 * tw) % tw), sy = Math.floor(((y / Hh) * 2 * th) % th);
+      const si = (sy * tw + sx) * 4, di = (y * W + x) * 4;
+      let nx = ((nrm[si] / 255) * 2 - 1) * bump, ny = ((nrm[si + 1] / 255) * 2 - 1) * bump, nz = (nrm[si + 2] / 255) * 2 - 1;
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      nx /= nl; ny /= nl; nz /= nl;
+      const ndl = Math.max(0, (nx * L[0] + ny * L[1] + nz * L[2]) / ll);
+      const spec = ks * Math.pow(Math.max(0, (nx * Hv[0] + ny * Hv[1] + nz * Hv[2]) / hl), shin);
+      const shade = 0.32 + 0.72 * ndl;
+      for (let k = 0; k < 3; k++) d[di + k] = Math.round(Math.min(1, toSrgb(Math.min(1, LUT[alb[si + k]] * t[k] * shade + spec))) * 255);
+      d[di + 3] = 255;
+    }
+  ctx.putImageData(img, Math.round(x0), Math.round(y0));
+}
+
+/** A ruler for the preview: a round length (cm) that is 60–220 px long when tilePx px show tileCm cm. */
+export function rulerFor(tilePx, tileCm) {
+  const pxPerCm = tilePx / tileCm;
+  const cm = [1, 2, 5, 10, 20, 50, 100, 200].find((c) => c * pxPerCm >= 60) || 200;
+  return { cm, px: cm * pxPerCm };
 }
 
 /** Roughness / clearcoat from the 0..1 gloss slider. */

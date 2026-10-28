@@ -76,6 +76,16 @@ export class Viewer {
     this.pickTarget = new THREE.WebGLRenderTarget(1, 1);
     this.pickBuf = new Uint8Array(4);
     this.skins = new Map();
+    // re-skinned and resized parts, already in the output frame (metres, on the floor)
+    this.out = new THREE.Group();
+    this.scene.add(this.out);
+    // W / D / H dimension lines and their labels
+    this.dimGroup = new THREE.Group();
+    this.dimGroup.renderOrder = 10;
+    this.scene.add(this.dimGroup);
+    this.dimLabels = [];
+    this.dimsOn = true;
+    this.axes = { w: 2, d: 0, front: 1 };
     this.partCount = 0;
     this.dirty = true;
 
@@ -88,6 +98,7 @@ export class Viewer {
       if (moved || this.dirty) {
         this.dirty = false;
         r.render(this.scene, this.camera);
+        this.placeLabels();
         this.frames = (this.frames || 0) + 1;
       }
     };
@@ -145,7 +156,10 @@ export class Viewer {
       });
     }
     if (this.pickMesh) { this.pickScene.remove(this.pickMesh); this.pickMesh = null; }
-    this.skins.clear();
+    for (const key of [...this.skins.keys()]) this.removeSkin(key);
+    this.baseBox = null;
+    this.baseBoxKey = '';
+    this.clearDimensions();
     this.model = this.base = this.overlay = null;
     this.partCount = 0;
     this.shadow.visible = false;
@@ -167,7 +181,7 @@ export class Viewer {
     // triangle order as loaded: every re-split sorts from this, never from an already sorted index
     const g = this.base.geometry;
     this.baseIndex = g.index ? g.index.array.slice() : Uint32Array.from({ length: g.attributes.position.count }, (_, i) => i);
-    this.front = null;
+    this.framed = false;
     this.clayMaterial = new THREE.MeshStandardMaterial({ color: 0xc9c4bc, roughness: 0.75 });
     this.hiddenMaterial = new THREE.MeshBasicMaterial({ visible: false });
     this.scene.add(this.model);
@@ -176,27 +190,47 @@ export class Viewer {
     this.dirty = true;
   }
 
-  /** Front of a sofa/chair = away from the tall backrest. Returns a unit vector in the ground plane. */
-  frontDirection(pos) {
-    const box = new THREE.Box3().setFromBufferAttribute(new THREE.BufferAttribute(pos, 3));
-    const size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
-    const depthAxis = size.x < size.z ? 0 : 2;
-    const yCut = box.max.y - size.y * 0.15;
-    let sum = 0, n = 0;
-    for (let i = 0; i < pos.length; i += 3) if (pos[i + 1] > yCut) { sum += pos[i + depthAxis]; n++; }
-    const offset = n ? sum / n - (depthAxis === 0 ? c.x : c.z) : 0;
-    const sign = Math.abs(offset) < size.getComponent(depthAxis) * 0.05 ? 1 : -Math.sign(offset);
-    return depthAxis === 0 ? new THREE.Vector3(sign, 0, 0) : new THREE.Vector3(0, 0, sign);
+  /** Which horizontal axis is W and D, and the front side (from core/size furnitureAxes). */
+  setAxes(axes) {
+    this.axes = axes;
+    this.updateDimensions();
   }
 
-  frame(front = this.front) {
+  /** Model units -> metres on the floor (core/size outputTransform). Everything shown is then real size. */
+  setOutputTransform(xf) {
     if (!this.model) return;
-    if (front) this.front = front;
-    const box = new THREE.Box3().setFromObject(this.model);
+    this.model.scale.fromArray(xf.scale);
+    this.model.position.fromArray(xf.offset);
+    this.model.updateMatrixWorld(true);
+    this.updateDimensions();
+    this.dirty = true;
+  }
+
+  /** Box (metres) of the original parts still shown; the screen knows which parts are replaced. */
+  setBaseBox(b) {
+    const key = b ? [...b.min, ...b.max].map((v) => v.toFixed(5)).join(',') : '';
+    if (key === this.baseBoxKey) return;
+    this.baseBoxKey = key;
+    this.baseBox = b ? new THREE.Box3(new THREE.Vector3(...b.min), new THREE.Vector3(...b.max)) : null;
+    this.updateDimensions();
+  }
+
+  /** Box around everything visible (model + re-skinned parts), in metres. */
+  bounds() {
+    const box = new THREE.Box3();
+    if (this.baseBox) box.union(this.baseBox);
+    else if (this.base) box.expandByObject(this.base);
+    for (const m of this.out.children) if (m.visible) box.expandByObject(m);
+    return box;
+  }
+
+  frame() {
+    if (!this.model) return;
+    const box = this.bounds();
     const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
     const radius = size.length() / 2;
     const dist = radius / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2)) * 1.05;
-    const f = (this.front || new THREE.Vector3(0, 0, 1)).clone();
+    const f = new THREE.Vector3().setComponent(this.axes.d, this.axes.front);
     const side = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), f).normalize();
     const dir = f.multiplyScalar(Math.cos(0.6)).add(side.multiplyScalar(Math.sin(0.6))).normalize();
     dir.y = 0.42;
@@ -207,11 +241,18 @@ export class Viewer {
     this.camera.far = dist * 20;
     this.camera.updateProjectionMatrix();
     this.controls.update();
+    this.placeShadow(box);
+    this.framed = true;
+    this.dirty = true;
+  }
+
+  placeShadow(box = this.bounds()) {
+    const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
+    const radius = size.length() / 2;
     const foot = Math.max(size.x, size.z) * 1.35;
     this.shadow.scale.set(size.x * 1.25 + foot * 0.1, size.z * 1.25 + foot * 0.1, 1);
     this.shadow.position.set(center.x, box.min.y + 0.0005 * radius, center.z);
     this.shadow.visible = true;
-    this.dirty = true;
   }
 
   /** Part data from the worker: welded positions + triangles and a part id per original triangle. */
@@ -228,7 +269,7 @@ export class Viewer {
     base.material = this.baseMaterials;
 
     // overlay + picking share one welded geometry
-    if (this.overlay) { base.remove(this.overlay); this.overlay.geometry.dispose(); }
+    if (this.overlay) { this.overlay.removeFromParent(); this.overlay.geometry.dispose(); }
     const sorted = sortByPart(weldedIndex, faceLabels, partCount);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(weldedPos, 3));
@@ -241,7 +282,7 @@ export class Viewer {
     }));
     this.overlay = new THREE.Mesh(geo, this.overlayMaterials);
     this.overlay.renderOrder = 2;
-    base.add(this.overlay);
+    this.model.add(this.overlay); // welded positions are in scene units, like the model root's children
 
     const pickMaterials = Array.from({ length: partCount }, (_, i) => {
       const id = i + 1;
@@ -251,7 +292,6 @@ export class Viewer {
     this.pickMesh = new THREE.Mesh(geo, pickMaterials);
     this.pickMesh.matrixAutoUpdate = false;
     this.pickScene.add(this.pickMesh);
-    if (!this.front) this.frame(this.frontDirection(weldedPos)); // keep the user's view when re-splitting
     this.dirty = true;
   }
 
@@ -263,9 +303,9 @@ export class Viewer {
     const x = Math.floor((clientX - rect.left) * dpr), y = Math.floor((clientY - rect.top) * dpr);
     const W = Math.floor(rect.width * dpr), H = Math.floor(rect.height * dpr);
     if (x < 0 || y < 0 || x >= W || y >= H) return -1;
-    this.base.updateMatrixWorld();
-    this.pickMesh.matrix.copy(this.base.matrixWorld);
-    this.pickMesh.matrixWorld.copy(this.base.matrixWorld);
+    this.model.updateMatrixWorld();
+    this.pickMesh.matrix.copy(this.model.matrixWorld);
+    this.pickMesh.matrixWorld.copy(this.model.matrixWorld);
     this.camera.setViewOffset(W, H, x, y, 1, 1);
     const r = this.renderer;
     const prevTone = r.toneMapping;
@@ -296,14 +336,41 @@ export class Viewer {
     this.dirty = true;
   }
 
-  /** Show (or remove with geo = null) a re-skinned group. */
-  setSkin(key, geo, material) {
+  pickMaterial(id) {
+    return new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB((id & 255) / 255, ((id >> 8) & 255) / 255, ((id >> 16) & 255) / 255, THREE.LinearSRGBColorSpace), toneMapped: false });
+  }
+
+  removeSkin(key) {
     const old = this.skins.get(key);
-    if (old && (!geo || old.userData.geo !== geo)) {
-      this.base.remove(old);
-      old.geometry.dispose();
-      this.skins.delete(key);
+    if (!old) return;
+    this.out.remove(old);
+    old.geometry.dispose();
+    if (old.userData.ownMaterial) old.material.dispose();
+    if (old.userData.pick) { this.pickScene.remove(old.userData.pick); old.userData.pick.material.dispose(); }
+    this.skins.delete(key);
+    this.updateDimensions();
+    this.dirty = true;
+  }
+
+  addSkinMesh(key, mesh, pickPart) {
+    this.out.add(mesh);
+    this.skins.set(key, mesh);
+    this.updateDimensions();
+    if (pickPart >= 0) {
+      // clicks on the re-skinned surface (which may be bigger than the original part) pick its group
+      const pick = new THREE.Mesh(mesh.geometry, this.pickMaterial(pickPart + 1));
+      this.pickScene.add(pick);
+      mesh.userData.pick = pick;
     }
+  }
+
+  /**
+   * Show (or remove with geo = null) a re-skinned group. geo is in metres in the output frame.
+   * pickPart: a part of the group, so clicking the new surface selects the group.
+   */
+  setSkin(key, geo, material, pickPart = -1) {
+    const old = this.skins.get(key);
+    if (old && (!geo || old.userData.geo !== geo)) this.removeSkin(key);
     if (!geo) { this.dirty = true; return; }
     let mesh = this.skins.get(key);
     if (!mesh) {
@@ -314,14 +381,65 @@ export class Viewer {
       g.setIndex(new THREE.BufferAttribute(geo.index, 1));
       mesh = new THREE.Mesh(g, material);
       mesh.userData.geo = geo;
-      this.base.add(mesh);
-      this.skins.set(key, mesh);
+      mesh.userData.ownMaterial = true;
+      this.addSkinMesh(key, mesh, pickPart);
     }
     if (material && mesh.material !== material) {
       const prev = mesh.material;
       mesh.material = material;
       if (prev && prev !== material) prev.dispose();
     }
+    this.dirty = true;
+    return mesh;
+  }
+
+  /**
+   * Original look of some parts, resized: the parts' own triangles and texture, in the output
+   * frame, stretched with st (core/size stretchFor). sig identifies the shape so it is rebuilt only when it changes.
+   */
+  setResizedOriginal(key, parts, stretch, sig, pickPart = -1) {
+    const old = this.skins.get(key);
+    if (old && old.userData.sig === sig) return old;
+    this.removeSkin(key);
+    const g = this.base.geometry, idx = g.index.array;
+    const ranges = g.groups.filter((gr) => parts.includes(gr.materialIndex));
+    const count = ranges.reduce((a, r) => a + r.count, 0);
+    const remap = new Int32Array(g.attributes.position.count).fill(-1);
+    const index = new Uint32Array(count);
+    let n = 0, o = 0;
+    for (const r of ranges)
+      for (let i = r.start; i < r.start + r.count; i++) {
+        const v = idx[i];
+        if (remap[v] < 0) remap[v] = n++;
+        index[o++] = remap[v];
+      }
+    this.model.updateMatrixWorld(true);
+    const m = this.base.matrixWorld, nm = new THREE.Matrix3().getNormalMatrix(m);
+    const P = new Float32Array(n * 3), N = new Float32Array(n * 3);
+    const src = g.attributes, uvSrc = src.uv, U = uvSrc ? new Float32Array(n * 2) : null;
+    const v3 = new THREE.Vector3();
+    for (let v = 0; v < remap.length; v++) {
+      const k = remap[v];
+      if (k < 0) continue;
+      v3.fromBufferAttribute(src.position, v).applyMatrix4(m);
+      P[k * 3] = v3.x; P[k * 3 + 1] = v3.y; P[k * 3 + 2] = v3.z;
+      if (src.normal) {
+        v3.fromBufferAttribute(src.normal, v).applyMatrix3(nm).normalize();
+        N[k * 3] = v3.x; N[k * 3 + 1] = v3.y; N[k * 3 + 2] = v3.z;
+      }
+      if (U) { U[k * 2] = uvSrc.getX(v); U[k * 2 + 1] = uvSrc.getY(v); }
+    }
+    stretch(P, src.normal ? N : null);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(P, 3));
+    if (src.normal) geo.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+    else geo.computeVertexNormals();
+    if (U) geo.setAttribute('uv', new THREE.BufferAttribute(U, 2));
+    geo.setIndex(new THREE.BufferAttribute(index, 1));
+    const mesh = new THREE.Mesh(geo, this.baseMaterial.clone()); // own copy so the hover glow stays on this part
+    mesh.userData.sig = sig;
+    mesh.userData.ownMaterial = true;
+    this.addSkinMesh(key, mesh, pickPart);
     this.dirty = true;
     return mesh;
   }
@@ -347,7 +465,79 @@ export class Viewer {
 
   setSkinVisible(key, visible) {
     const mesh = this.skins.get(key);
-    if (mesh) { mesh.visible = visible; this.dirty = true; }
+    if (mesh && mesh.visible !== visible) {
+      mesh.visible = visible;
+      if (mesh.userData.pick) mesh.userData.pick.visible = visible;
+      this.updateDimensions();
+      this.dirty = true;
+    }
+  }
+
+  // ---------- dimensions ----------
+
+  clearDimensions() {
+    for (const c of [...this.dimGroup.children]) { this.dimGroup.remove(c); c.geometry.dispose(); c.material.dispose(); }
+    for (const l of this.dimLabels) l.el.remove();
+    this.dimLabels = [];
+  }
+
+  setDimensionsVisible(on) {
+    this.dimsOn = on;
+    this.updateDimensions();
+  }
+
+  /** W along the front floor edge, D along the right floor edge, H up the back corner, in mm. */
+  updateDimensions() {
+    this.clearDimensions();
+    if (!this.dimsOn || !this.model || !this.base) { this.dirty = true; return; }
+    const box = this.bounds();
+    if (box.isEmpty()) return;
+    const size = box.getSize(new THREE.Vector3());
+    const { w, d, front } = this.axes;
+    const pad = Math.max(size.x, size.z) * 0.06, tick = pad * 0.35;
+    const y0 = box.min.y + 0.002;
+    const dFront = front > 0 ? box.max.getComponent(d) + pad : box.min.getComponent(d) - pad;
+    const dBack = front > 0 ? box.min.getComponent(d) : box.max.getComponent(d);
+    const wSide = box.max.getComponent(w) + pad;
+    const pt = (wv, y, dv) => new THREE.Vector3().setComponent(w, wv).setComponent(d, dv).setY(y);
+    const lines = [
+      { a: pt(box.min.getComponent(w), y0, dFront), b: pt(box.max.getComponent(w), y0, dFront), tickDir: pt(0, 0, 1), text: `W ${Math.round(size.getComponent(w) * 1000)}` },
+      { a: pt(wSide, y0, box.min.getComponent(d)), b: pt(wSide, y0, box.max.getComponent(d)), tickDir: pt(1, 0, 0), text: `D ${Math.round(size.getComponent(d) * 1000)}` },
+      { a: pt(wSide, box.min.y, dBack), b: pt(wSide, box.max.y, dBack), tickDir: pt(1, 0, 0), text: `H ${Math.round(size.y * 1000)}` },
+    ];
+    const verts = [];
+    for (const l of lines) {
+      verts.push(...l.a.toArray(), ...l.b.toArray());
+      for (const p of [l.a, l.b]) {
+        const t = l.tickDir.clone().multiplyScalar(tick);
+        verts.push(...p.clone().sub(t).toArray(), ...p.clone().add(t).toArray());
+      }
+      const el = document.createElement('div');
+      el.className = 'dim-label';
+      el.textContent = l.text;
+      this.host.appendChild(el);
+      this.dimLabels.push({ el, at: l.a.clone().add(l.b).multiplyScalar(0.5) });
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    const color = getComputedStyle(this.host).getPropertyValue('--dim-line').trim() || '#6f665c';
+    const lineMat = new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9, toneMapped: false });
+    const seg = new THREE.LineSegments(geo, lineMat);
+    seg.renderOrder = 10;
+    this.dimGroup.add(seg);
+    this.dirty = true;
+  }
+
+  placeLabels() {
+    if (!this.dimLabels.length) return;
+    const w = this.host.clientWidth, h = this.host.clientHeight;
+    const v = new THREE.Vector3();
+    for (const l of this.dimLabels) {
+      v.copy(l.at).project(this.camera);
+      const hide = v.z > 1;
+      l.el.style.display = hide ? 'none' : '';
+      l.el.style.transform = `translate(${((v.x + 1) / 2) * w}px, ${((1 - v.y) / 2) * h}px) translate(-50%, -50%)`;
+    }
   }
 
   maxAnisotropy() {

@@ -8,10 +8,12 @@ import { ImageUtils, WebIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import {
-  DEFAULTS, applyToGroup, buildGroups, compressKeptTextures, createMaterial, encodeVariant,
-  facesOfParts, mainPrimitive, reskinGeometry, weldedPositions,
+  DEFAULTS, applyMatrix, applyToGroup, compressKeptTextures, createMaterial, encodeVariant, facesOfParts,
+  groupPrimitive, mainPrimitive, meshWorldMatrix, plainFloats, prepareOutput, releaseSource, reskinGeometry,
+  setVariant, weldedPositions,
 } from '../core/skin.js';
 import { adjacency, segment, uniqueEdges, valleyCurvature, vertexNormals } from '../core/segment.js';
+import { bboxOf, furnitureAxes } from '../core/size.js';
 import { stripWebPProfile } from './webp.js';
 
 const ready = Promise.all([MeshoptDecoder.ready, MeshoptEncoder.ready, MeshoptSimplifier.ready]);
@@ -38,27 +40,23 @@ async function getIO() {
   return io;
 }
 
-function bboxOf(pos) {
-  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < pos.length; i += 3)
-    for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], pos[i + k]); max[k] = Math.max(max[k], pos[i + k]); }
-  return { min, max };
-}
-
 async function open({ bytes }, progress) {
   const io = await getIO();
   const T = timer();
   progress('파일 읽는 중', 0.05);
   const doc = await io.readBinary(new Uint8Array(bytes));
   T.mark('read');
-  const { prim } = mainPrimitive(doc);
+  await plainFloats(doc);
+  const { prim, mesh } = mainPrimitive(doc);
   const indexCount = prim.getIndices() ? prim.getIndices().getCount() : prim.getAttribute('POSITION').getCount();
   const textures = doc.getRoot().listTextures().map((t) => {
     const size = t.getSize();
     return { name: t.getName() || t.getURI(), mime: t.getMimeType(), bytes: t.getImage()?.byteLength || 0, width: size?.[0] || 0, height: size?.[1] || 0 };
   });
   progress('모양 정리 중', 0.2);
+  // scene ("world") units: 3DAISTUDIO lifts the mesh onto the floor with a node offset
   const welded = weldedPositions(doc, prim);
+  applyMatrix(welded.pos, meshWorldMatrix(doc, mesh));
   T.mark('weld');
   progress('경계 찾는 중', 0.4);
   const nv = welded.pos.length / 3;
@@ -78,6 +76,7 @@ async function open({ bytes }, progress) {
       indexCount, textures, bbox: bboxOf(welded.pos),
       materials: doc.getRoot().listMaterials().length, meshes: doc.getRoot().listMeshes().length,
     },
+    axes: furnitureAxes(welded.pos),
     welded: { pos: welded.pos.slice(), index: welded.index.slice() },
     ...seg,
   };
@@ -94,12 +93,16 @@ function runSegment(opts) {
   };
 }
 
-/** Geometry for the live preview of a re-skinned group (same code path as the export). */
-function preview({ parts, simplify }) {
-  const key = `${[...parts].sort((a, b) => a - b).join(',')}|${simplify}`;
+/**
+ * Geometry for the live preview of a re-skinned group (same code path as the export):
+ * in metres in the output frame (xf), resized when size is given.
+ */
+function preview({ parts, simplify, xf, size, axes }) {
+  const key = JSON.stringify([[...parts].sort((a, b) => a - b), simplify, xf, size, axes]);
   let geo = state.previews.get(key);
   if (!geo) {
-    geo = reskinGeometry(state.welded, facesOfParts(state.faceLabels, parts), { simplify });
+    geo = reskinGeometry(state.welded, facesOfParts(state.faceLabels, parts), { simplify, xf, size, axes });
+    if (state.previews.size > 24) state.previews.clear();
     state.previews.set(key, geo);
   }
   return { position: geo.position.slice(), normal: geo.normal.slice(), uv: geo.uv.slice(), index: geo.index.slice() };
@@ -127,8 +130,11 @@ async function encodeTexture(bytes, mime, maxSize, { quality = 0.85, type = 'ima
 
 /**
  * Write one GLB per combination of choices.
- * args: { names, widthMm, quality: { simplify, keepSimplify }, keptTextureSize, meshopt, compat,
- *         groups: [{ key, name, parts }], variants: [[{ group, def, color, rotate }]], textures: { path: Uint8Array } }
+ * args: { names, xf, axes, quality: { simplify, keepSimplify }, keptTextureSize, meshopt, compat,
+ *         groups: [{ key, name, parts }],
+ *         variants: [[{ group, def | null, color, rotate, size: { w, d } | null }]],  (def null = keep the original look)
+ *         textures: { path: Uint8Array } }
+ * The file is in metres (xf), standing on the floor.
  */
 async function exportVariants(args, progress, sendFile) {
   const io = await getIO();
@@ -136,13 +142,24 @@ async function exportVariants(args, progress, sendFile) {
   const { groups, variants, textures } = args;
   progress('원본 다시 읽는 중', 0.02);
   const doc = await io.readBinary(state.bytes);
+  await plainFloats(doc);
   T.mark('read');
   const { prim, mesh } = mainPrimitive(doc);
-  const analysis = { prim, mesh, welded: state.welded, faceLabels: state.faceLabels };
-  progress('모양 정리 중', 0.08);
-  const built = buildGroups(doc, analysis, groups.map((g) => ({ name: g.key, parts: g.parts, reskin: true })), {
-    ...DEFAULTS, ...args.quality, widthMm: args.widthMm,
-  });
+  const analysis = { prim, mesh, world: meshWorldMatrix(doc, mesh), welded: state.welded, faceLabels: state.faceLabels, axes: args.axes };
+  progress('모양 정리 중', 0.06);
+  const ctx = prepareOutput(doc, analysis, args.xf, groups, { ...DEFAULTS, ...args.quality });
+  T.mark('rest');
+
+  // every option (group × material or original look × size) is built once and reused
+  const optKey = (c) => `${c.group}|${c.def ? 'skin' : 'keep'}|${c.size ? `${c.size.w ?? ''}x${c.size.d ?? ''}` : ''}`;
+  const built = new Map();
+  const needed = [...new Map(variants.flat().map((c) => [optKey(c), c])).values()];
+  for (let i = 0; i < needed.length; i++) {
+    const c = needed[i];
+    progress(`부분 모양 만드는 중 ${i + 1}/${needed.length}`, 0.08 + (0.12 * i) / needed.length);
+    built.set(optKey(c), groupPrimitive(ctx, groups.find((g) => g.key === c.group), { reskin: !!c.def, size: c.size }));
+  }
+  releaseSource(ctx);
   T.mark('geometry');
   progress('원본 텍스처 압축 중', 0.2);
   const texType = args.compat ? 'image/jpeg' : 'image/webp';
@@ -165,11 +182,14 @@ async function exportVariants(args, progress, sendFile) {
   for (let i = 0; i < variants.length; i++) {
     const combo = variants[i];
     progress(`변형 ${i + 1}/${variants.length} 만드는 중`, 0.25 + (0.75 * i) / variants.length);
+    const parts = combo.map((c) => built.get(optKey(c)));
+    setVariant(ctx, parts);
     const made = [];
-    for (const choice of combo) {
-      const g = built.find((x) => x.name === choice.group);
-      const { mat, def } = await createMaterial(doc, choice.def, choice.color, loadImage, cache);
-      applyToGroup(doc, g, mat, def, { rotate: choice.rotate || 0 });
+    for (let k = 0; k < combo.length; k++) {
+      const c = combo[k];
+      if (!c.def || !parts[k]) continue;
+      const { mat, def } = await createMaterial(doc, c.def, c.color, loadImage, cache);
+      applyToGroup(doc, parts[k], mat, def, { rotate: c.rotate || 0 });
       made.push(mat);
     }
     T.mark(`variant ${i + 1} materials`);

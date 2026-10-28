@@ -4,9 +4,12 @@
 import { zipSync } from 'fflate';
 import { Viewer } from './viewer.js';
 import { forgetSwatches, forgetTextures, makeThreeMaterial, swatch } from './materials.js';
-import { canvasBlob, glossToSurface, KINDS, processPhoto } from './photo.js';
+import { canvasBlob, drawLitTiles, glossToSurface, KINDS, processPhoto, rulerFor } from './photo.js';
 import * as store from './store.js';
 import { colorLabel, tileUV } from '../core/skin.js';
+import {
+  bboxWith, extentOf, outputTransform, parseSizes, sizeLabel, sizeWith, stretchFor, stretchGeometry, swapAxes,
+} from '../core/size.js';
 
 /* global __VERSION__ */
 const VERSION = typeof __VERSION__ === 'string' ? __VERSION__ : 'dev';
@@ -53,7 +56,7 @@ const QUALITY = {
 
 const S = {
   file: null, info: null, parts: [], faceLabels: null, welded: null, dims: null, segKey: 0,
-  widthMm: null, sensitivity: 105,
+  size: { w: null, d: null, h: null }, axes: { w: 2, d: 0, front: 1 }, axesSwapped: false, dimsOn: true, sensitivity: 105,
   selection: new Set(), groups: [], active: null, view: 'material', hover: -1,
   tab: '가죽', quality: 'standard', keptTex: 4096, compat: false, prefix: '',
   colors: [], results: [], resultNote: '', exporting: false, confirmReseg: false, moreOpen: false,
@@ -262,6 +265,13 @@ function refreshStyles() {
     viewer.setSkinVisible(g.key, S.view === 'material' && g.skinShown);
     viewer.setSkinHighlight(g.key, S.view === 'material' && hoverGroup === g);
   }
+  // the dimension lines measure what is shown: original parts that are not replaced + the replacements
+  const shown = styles.map((st, i) => (st.base === 'hidden' ? -1 : i)).filter((i) => i >= 0);
+  if (shown.length) {
+    const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+    for (const p of shown) for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], S.parts[p].min[k]); max[k] = Math.max(max[k], S.parts[p].max[k]); }
+    viewer.setBaseBox(bboxWith({ min, max }, currentXf()));
+  } else viewer.setBaseBox(null);
   renderLegend();
 }
 
@@ -301,10 +311,17 @@ async function openFile(file) {
       selection: new Set(), groups: [], active: null, hover: -1, results: [], resultNote: '', segKey: S.segKey + 1, confirmReseg: false,
     });
     S.prefix = S.file.base;
-    S.widthMm = await store.getKV(`width:${file.name}`, null);
+    const saved = await store.getKV(`size:${file.name}`, null);
+    const legacyW = saved ? null : await store.getKV(`width:${file.name}`, null);
+    S.size = { w: saved?.w ?? legacyW ?? null, d: saved?.d ?? null, h: saved?.h ?? null };
+    S.axesSwapped = !!saved?.swapped;
+    S.axes = S.axesSwapped ? swapAxes(res.axes) : res.axes;
     previewCache.clear();
     const tParts = performance.now();
     viewer.setParts(res.welded.pos, res.welded.index, res.faceLabels, res.parts.length);
+    viewer.setAxes(S.axes);
+    viewer.setOutputTransform(currentXf());
+    viewer.frame();
     console.info('열기 단계(ms)', JSON.stringify({ read: Math.round(tRead - tOpen), worker: Math.round(tWork - tRead), view: Math.round(tParts - tWork), parts: Math.round(performance.now() - tParts) }));
     $('#drop').hidden = true;
     $('#stageTools').hidden = false;
@@ -355,8 +372,9 @@ function suggestName(parts) {
   }
   sx = hi[0] - lo[0]; sz = hi[2] - lo[2];
   if (minY < b.min[1] + 0.03 * H && area < 8) return '다리';
-  if (parts.includes(0)) return '몸체';
+  // a thin slab across the very top: a table top (checked before 몸체, it is often the biggest part)
   if (maxY > b.max[1] - 0.05 * H && hi[1] - lo[1] < 0.25 * Math.max(sx, sz) && Math.max(sx, sz) > 0.6 * Math.max(S.dims.x, S.dims.z)) return '상판';
+  if (parts.includes(0)) return '몸체';
   return null;
 }
 
@@ -379,7 +397,7 @@ function newGroup(parts) {
   const color = GROUP_COLORS.find((c) => !used.has(c)) || GROUP_COLORS[S.groups.length % GROUP_COLORS.length];
   const g = {
     key: uid('g'), name: uniqueName(suggestName(parts) || `그룹 ${S.groups.length + 1}`), parts: [...parts].sort((a, b) => a - b), color,
-    choices: [], active: null, rotate: 0, skinShown: false, token: 0, pick: null,
+    choices: [], active: null, rotate: 0, skinShown: false, token: 0, pick: null, sizes: [], activeSize: null,
   };
   S.groups.push(g);
   S.selection.clear();
@@ -428,35 +446,79 @@ function similarParts(ids) {
 
 // ---------- live preview ----------
 
+// ---------- real size ----------
+
+/** Height assumed for previews until the real one is typed in (mm). */
+function provisionalH() {
+  const ext = extentOf(S.info.bbox);
+  if (S.size.w) return (S.size.w * ext[1]) / ext[S.axes.w];
+  if (S.size.d) return (S.size.d * ext[1]) / ext[S.axes.d];
+  return 800;
+}
+/** Model units -> metres on the floor, from W / D / H. Everything on screen and in the files uses it. */
+const currentXf = () => outputTransform(S.info.bbox, S.axes, { ...S.size, h: S.size.h || provisionalH() });
+const realSize = () => sizeWith(S.info.bbox, S.axes, currentXf());
+
+/** Bounding box of a group's parts in metres, before any resizing. */
+function groupBox(g) {
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (const p of g.parts)
+    for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], S.parts[p].min[k]); max[k] = Math.max(max[k], S.parts[p].max[k]); }
+  return bboxWith({ min, max }, currentXf());
+}
+function groupSizeMm(g) {
+  const b = groupBox(g);
+  return { w: (b.max[S.axes.w] - b.min[S.axes.w]) * 1000, d: (b.max[S.axes.d] - b.min[S.axes.d]) * 1000 };
+}
+
+/** W / D / H or the W-D direction changed: show the model at the new size and rebuild the previews. */
+function applySize() {
+  if (!S.info) return;
+  viewer.setAxes(S.axes);
+  viewer.setOutputTransform(currentXf());
+  for (const g of S.groups) updatePreview(g);
+  refreshStyles();
+  viewer.frame();
+  if (S.file) store.setKV(`size:${S.file.name}`, { ...S.size, swapped: S.axesSwapped });
+}
+
+// ---------- previews ----------
+
 const previewCache = new Map();
-function previewGeo(g) {
+function previewGeo(g, size) {
   const q = QUALITY[S.quality];
-  const key = `${S.segKey}|${g.parts.join(',')}|${q.simplify}`;
-  if (!previewCache.has(key)) previewCache.set(key, call('preview', { parts: g.parts, simplify: q.simplify }));
+  const xf = currentXf(), sz = size ? { w: size.w, d: size.d } : null;
+  const key = JSON.stringify([S.segKey, g.parts, q.simplify, xf, sz, S.axes]);
+  if (!previewCache.has(key)) {
+    if (previewCache.size > 16) previewCache.delete(previewCache.keys().next().value);
+    previewCache.set(key, call('preview', { parts: g.parts, simplify: q.simplify, xf, size: sz, axes: S.axes }));
+  }
   return previewCache.get(key);
 }
-const m2u = () => (S.widthMm || 1800) / 1000 / Math.max(S.dims.x, S.dims.z);
-function metresUV(uv) {
-  const k = m2u(), out = new Float32Array(uv.length);
-  for (let i = 0; i < uv.length; i++) out[i] = uv[i] * k;
-  return out;
-}
+const activeSize = (g) => g.sizes.find((z) => z.id === g.activeSize) || null;
 
 async function updatePreview(g) {
   const token = ++g.token;
-  const choice = g.choices.find((c) => c.id === g.active);
-  if (!choice || !S.parts.length) {
+  const choice = g.choices.find((c) => c.id === g.active) || null;
+  const size = activeSize(g);
+  if ((!choice && !size) || !S.parts.length) {
     viewer.setSkin(g.key, null);
     g.skinShown = false;
     refreshStyles();
     return;
   }
-  const def = materialById(choice.materialId);
   try {
-    const [geo, mat] = await Promise.all([previewGeo(g), makeThreeMaterial(def, choice.color, getBlob, viewer.maxAnisotropy())]);
-    if (token !== g.token || !S.groups.includes(g)) { mat.dispose(); return; }
-    viewer.setSkin(g.key, geo, mat);
-    viewer.setSkinUV(g.key, tileUV(metresUV(geo.uv), def, g.rotate));
+    if (choice) {
+      const def = materialById(choice.materialId);
+      const [geo, mat] = await Promise.all([previewGeo(g, size), makeThreeMaterial(def, choice.color, getBlob, viewer.maxAnisotropy())]);
+      if (token !== g.token || !S.groups.includes(g)) { mat.dispose(); return; }
+      viewer.setSkin(g.key, geo, mat, g.parts[0]);
+      viewer.setSkinUV(g.key, tileUV(geo.uv, def, g.rotate));
+    } else {
+      // original look, resized: done on the screen side from the loaded model
+      const st = stretchFor(groupBox(g), S.axes, size);
+      viewer.setResizedOriginal(g.key, g.parts, (P, N) => stretchGeometry(P, N, st), JSON.stringify([g.parts, currentXf(), size.w, size.d]), g.parts[0]);
+    }
     g.skinShown = true;
     refreshStyles();
   } catch (e) {
@@ -469,7 +531,7 @@ function refreshUVs() {
   for (const g of S.groups) {
     const choice = g.choices.find((c) => c.id === g.active);
     if (!choice || !g.skinShown) continue;
-    previewGeo(g).then((geo) => viewer.setSkinUV(g.key, tileUV(metresUV(geo.uv), materialById(choice.materialId), g.rotate)));
+    previewGeo(g, activeSize(g)).then((geo) => viewer.setSkinUV(g.key, tileUV(geo.uv, materialById(choice.materialId), g.rotate)));
   }
 }
 
@@ -510,19 +572,27 @@ function renderInfo() {
       <dt>텍스처</dt><dd>${esc(tex)}</dd>
     </dl>
     <div class="field">
-      <label for="widthMm">실제 가로 길이</label>
-      <div class="input-row"><input class="input num" id="widthMm" inputmode="numeric" placeholder="예: 1800" value="${S.widthMm ?? ''}"><span class="unit">mm</span><span class="note" id="dimsNote"></span></div>
-      <p class="hint">가죽 결·원단 짜임을 실제 크기로 맞추는 데 써요. 소파는 팔걸이 끝에서 끝까지 재요.</p>
+      <span class="label">실제 크기 <span class="note">mm</span></span>
+      <div class="size-row">
+        <label class="size-in"><span>W 가로</span><input class="input num" id="sizeW" inputmode="numeric" autocomplete="off" value="${S.size.w ?? ''}"></label>
+        <label class="size-in"><span>D 깊이</span><input class="input num" id="sizeD" inputmode="numeric" autocomplete="off" value="${S.size.d ?? ''}"></label>
+        <label class="size-in req ${S.size.h ? '' : 'missing'}"><span>H 높이 <b>필수</b></span><input class="input num" id="sizeH" inputmode="numeric" autocomplete="off" value="${S.size.h ?? ''}"></label>
+      </div>
+      <p class="hint">H만 넣으면 비율 그대로 키우고, W·D까지 넣으면 그 치수에 맞게 늘이거나 줄여요. 저장하는 GLB가 이 크기(미터 단위)가 돼요.</p>
+      <button class="link" type="button" data-action="swap-axes">W와 D 방향이 반대인가요? 서로 바꾸기</button>
     </div>`;
-  updateDims();
+  updateSizeHints();
 }
 
-function updateDims() {
-  const el = $('#dimsNote');
-  if (!el || !S.dims) return;
-  if (!S.widthMm) { el.textContent = ''; return; }
-  const k = S.widthMm / Math.max(S.dims.x, S.dims.z);
-  el.textContent = `→ 깊이 약 ${fmtInt(Math.min(S.dims.x, S.dims.z) * k)} · 높이 약 ${fmtInt(S.dims.y * k)}mm`;
+/** Empty W / D / H boxes show what they will be with the current proportions. */
+function updateSizeHints() {
+  if (!S.info) return;
+  const r = realSize();
+  for (const [id, k] of [['sizeW', 'w'], ['sizeD', 'd'], ['sizeH', 'h']]) {
+    const el = $(`#${id}`);
+    if (el) el.placeholder = k === 'h' && !S.size.h ? '예: 800' : `비율대로 ${fmtInt(r[k])}`;
+  }
+  $('#sizeH')?.closest('.size-in')?.classList.toggle('missing', !S.size.h);
 }
 
 function renderParts() {
@@ -544,7 +614,7 @@ function renderParts() {
     <div class="groups">${S.groups.map((g) => `
       <div class="group ${g.key === S.active ? 'on' : ''}" data-action="group-activate" data-key="${g.key}">
         <span class="dot" style="background:${g.color}"></span>
-        <span class="name">${esc(g.name)} <span class="sub">· 부분 ${g.parts.length}개 · 변형 ${g.choices.length}개</span></span>
+        <span class="name">${esc(g.name)} <span class="sub">· 부분 ${g.parts.length}개 · 변형 ${g.choices.length || g.sizes.length ? optionsOf(g).length : 0}개</span></span>
         <button class="icon-btn" type="button" data-action="group-delete" data-key="${g.key}" title="그룹 지우기" aria-label="${esc(g.name)} 그룹 지우기">×</button>
       </div>`).join('') || '<p class="empty">아직 그룹이 없어요. 부분을 클릭한 뒤 ‘새 그룹으로’를 누르세요.</p>'}</div>
     <details class="more" ${S.confirmReseg || S.moreOpen ? 'open' : ''}><summary>부분이 잘 안 나뉘었나요?</summary>
@@ -561,12 +631,12 @@ function matCard(m, g) {
   const first = g.choices.find((c) => c.materialId === m.id && c.color);
   const hex = m.colorMode === 'photo' ? '' : first?.color.hex || SWATCH_TINT[m.palette] || NEUTRAL;
   const meta = m.maps ? `결 ${m.tileCm}cm` : m.metallic ? '금속' : (m.roughness ?? 1) < 0.3 ? '광택' : '매트';
-  return `<button class="mat ${g.pick === m.id ? 'on' : ''}" type="button" data-action="mat-pick" data-id="${esc(m.id)}" title="${esc(m.name)}">
+  return `<div class="mat-cell"><button class="mat ${g.pick === m.id ? 'on' : ''}" type="button" data-action="mat-pick" data-id="${esc(m.id)}" title="${esc(m.name)}">
     <img data-swatch="${esc(m.id)}|${hex}" alt="">
     <span class="cap"><b>${esc(m.name)}</b><small>${meta}</small></span>
     ${m.colorMode === 'photo' ? '<span class="badge">사진 색</span>' : m.source === 'photo' ? '<span class="badge">사진</span>' : ''}
     ${count ? `<span class="count">${count}</span>` : ''}
-  </button>`;
+  </button>${m.builtin ? '' : `<button class="mat-del" type="button" data-action="mat-delete" data-id="${esc(m.id)}" title="삭제" aria-label="‘${esc(m.name)}’ 삭제">×</button>`}</div>`;
 }
 
 function colorChip(c, on) {
@@ -623,8 +693,25 @@ function renderMaterial() {
       <div class="seg flat" role="group">
         <button type="button" data-action="rotate" data-rot="0" class="${g.rotate === 0 ? 'on' : ''}">기본</button>
         <button type="button" data-action="rotate" data-rot="90" class="${g.rotate === 90 ? 'on' : ''}">90° 돌리기</button>
-      </div></div>`;
+      </div></div>
+    ${sizeArea(g)}`;
   hydrateSwatches(el);
+}
+
+/** Order sizes for one part (a table top in 1600, 1800, 2000 ...): each size is a variant. */
+function sizeArea(g) {
+  const cur = groupSizeMm(g);
+  return `<div class="sub-head sizes-head"><span class="label">‘${esc(g.name)}’ 크기 바꾸기 <span class="note">(선택)</span></span>
+      ${g.sizes.length ? '<button class="link" type="button" data-action="sizes-clear">모두 빼기</button>' : ''}</div>
+    <p class="hint">지금 W ${fmtInt(cur.w)} × D ${fmtInt(cur.d)}mm. 상판처럼 주문 사이즈가 있는 부분에 써요. 테두리와 모서리 모양은 그대로 두고 가운데만 늘이거나 줄여요. 크기마다 변형이 하나씩 생겨요.</p>
+    <div class="input-row"><input class="input mono" id="sizeInput" placeholder="1800×900, 2000×1000" autocomplete="off" spellcheck="false">
+      <button class="btn small" type="button" data-action="size-add">추가</button></div>
+    <div class="choice-list">${g.sizes.map((z) => `
+      <span class="choice size ${z.id === g.activeSize ? 'on' : ''}" data-action="size-preview" data-id="${z.id}" title="누르면 미리보기">
+        <span class="mono">${esc(sizeLabel(z, cur))}</span>
+        <button class="x" type="button" data-action="size-remove" data-id="${z.id}" aria-label="빼기">×</button></span>`).join('')}
+      ${g.sizes.some((z) => Math.round(z.w) === Math.round(cur.w) && Math.round(z.d ?? cur.d) === Math.round(cur.d)) ? ''
+        : `<button class="chip plain" type="button" data-action="size-add-current">＋ 지금 크기 (${fmtInt(cur.w)}×${fmtInt(cur.d)})</button>`}</div>`;
 }
 
 function hydrateSwatches(root) {
@@ -636,9 +723,16 @@ function hydrateSwatches(root) {
   }
 }
 
+/** A group's options: each material choice (or the original look) × each size (or its own size). */
+function optionsOf(g) {
+  const mats = g.choices.length ? g.choices : [null];
+  const sizes = g.sizes.length ? g.sizes : [null];
+  return mats.flatMap((choice) => sizes.map((size) => ({ choice, size })));
+}
+
 function variantPlan() {
-  const active = S.groups.filter((g) => g.choices.length);
-  const count = active.length ? active.reduce((a, g) => a * g.choices.length, 1) : 0;
+  const active = S.groups.filter((g) => g.choices.length || g.sizes.length);
+  const count = active.length ? active.reduce((a, g) => a * optionsOf(g).length, 1) : 0;
   return { active, count };
 }
 
@@ -652,11 +746,15 @@ function renderExport() {
   el.classList.remove('dim');
   const { active, count } = variantPlan();
   const q = QUALITY[S.quality];
-  const off = S.exporting ? 'disabled' : '';
+  const needH = !S.size.h;
+  const off = S.exporting || needH ? 'disabled' : '';
+  const r = realSize();
+  const per = (g) => [g.choices.length ? `재질 ${g.choices.length}` : '', g.sizes.length ? `크기 ${g.sizes.length}` : ''].filter(Boolean).join('·');
   el.innerHTML = `${head(4, '내보내기')}
     <div class="summary">${count ? `변형 ${count}개를 만들어요` : '아직 고른 재질이 없어요'}
-      <small>${count ? `${active.map((g) => `${esc(g.name)} ${g.choices.length}개`).join(' × ')}${S.groups.length > active.length ? ' · 재질을 안 고른 그룹은 원본 그대로' : ''}` : '재질을 고르면 조합마다 GLB 파일이 하나씩 만들어져요.'}</small></div>
-    ${count && !S.widthMm ? '<p class="warn-text">1번에 실제 가로 길이를 넣어야 결 크기가 실제와 맞아요. 지금은 1800mm로 계산해요.</p>' : ''}
+      <small>${count ? `${active.map((g) => `${esc(g.name)} ${per(g)}`).join(' × ')}${S.groups.length > active.length ? ' · 고르지 않은 그룹은 원본 그대로' : ''}` : '재질이나 크기를 고르면 조합마다 GLB 파일이 하나씩 만들어져요.'}</small></div>
+    ${needH ? '<p class="warn-text">1번에 실제 높이(H)를 넣어야 저장할 수 있어요.</p>'
+      : `<p class="note">저장 크기 W ${fmtInt(r.w)} × D ${fmtInt(r.d)} × H ${fmtInt(r.h)}mm${S.groups.some((x) => x.sizes.length) ? ' (크기를 바꾼 부분은 변형마다 그 크기로)' : ''} · 미터 단위, 바닥 가운데 기준</p>`}
     ${count > 40 ? `<p class="warn-text">파일이 ${count}개예요. 시간이 꽤 걸릴 수 있어요.</p>` : ''}
     <div class="field"><span class="label">압축</span>
       <div class="seg flat" role="group">${Object.entries(QUALITY).map(([k, v]) => `<button type="button" data-action="quality" data-q="${k}" class="${k === S.quality ? 'on' : ''}">${v.label}</button>`).join('')}</div>
@@ -730,22 +828,28 @@ function variantName(base, combo) {
   if (!combo.length) return `${safeName(base)}_압축.glb`;
   const parts = combo.map((c) => {
     const g = S.groups.find((x) => x.key === c.group);
-    return [g?.name, c.def.name, colorLabel(c.color)].filter(Boolean).map(safeName).join('-');
+    const size = c.size && g ? sizeLabel(c.size, groupSizeMm(g)) : '';
+    return [g?.name, size, c.def?.name, colorLabel(c.color)].filter(Boolean).map(safeName).join('-');
   });
   return `${safeName(base)}__${parts.join('__')}.glb`;
 }
 
 async function runExport(kind) {
   if (S.exporting) return;
+  if (!S.size.h) { toast('1번에 실제 높이(H)를 넣어 주세요.'); $('#sizeH')?.focus(); return; }
   const compressOnly = kind === 'compress';
   const { active, count } = variantPlan();
   if (!compressOnly && !count) return;
   const q = QUALITY[S.quality];
   const base = S.prefix || S.file.base;
   const groups = compressOnly ? [] : active.map((g) => ({ key: g.key, name: g.name, parts: g.parts }));
-  const variants = compressOnly ? [[]] : cartesian(active.map((g) => g.choices.map((c) => {
-    const { builtin: _b, ...def } = materialById(c.materialId);
-    return { group: g.key, def, color: c.color, rotate: g.rotate };
+  const variants = compressOnly ? [[]] : cartesian(active.map((g) => optionsOf(g).map(({ choice, size }) => {
+    let def = null; // null keeps the original look (size-only option)
+    if (choice) {
+      const { builtin: _b, ...rest } = materialById(choice.materialId);
+      def = rest;
+    }
+    return { group: g.key, def, color: choice?.color || null, rotate: g.rotate, size: size ? { w: size.w, d: size.d } : null };
   })));
   const used = new Set();
   const names = variants.map((v) => {
@@ -770,10 +874,10 @@ async function runExport(kind) {
     const textures = {};
     for (const v of variants)
       for (const c of v)
-        for (const p of Object.values(c.def.maps || {}))
+        for (const p of Object.values(c.def?.maps || {}))
           if (!textures[p]) textures[p] = new Uint8Array(await (await getBlob(p)).arrayBuffer());
     const res = await call('export', {
-      names, widthMm: S.widthMm || 1800,
+      names, xf: currentXf(), axes: S.axes,
       quality: { simplify: q.simplify, keepSimplify: q.keepSimplify }, keptTextureSize: S.keptTex,
       meshopt: !S.compat, compat: S.compat, groups, variants, textures,
     }, {
@@ -809,12 +913,14 @@ async function runExport(kind) {
 
 // ---------- photo materials ----------
 
-const photo = { bitmap: null, kind: 'marble', colorMode: 'photo', widthCm: 60, overlap: 0.2, flatten: true, bump: 0.2, gloss: 0.85, res: 2048, name: '', size: null };
-let photoTimer = 0;
+const photo = { bitmap: null, kind: 'marble', colorMode: 'photo', widthCm: 60, overlap: 0.2, flatten: true, bump: 0.2, gloss: 0.85, contrast: 1, res: 2048, name: '', size: null };
+let photoTimer = 0, photoSeq = 0;
+let photoProcessed = null; // last processed preview: bump and gloss changes only re-light it
+const EXAMPLE_TINT = { fabric: '#8C8B88', leather: '#8B4A22' };
 
 function openPhotoDialog(kind) {
   const k = KINDS[kind] || KINDS.other;
-  Object.assign(photo, { kind, colorMode: k.colorMode, widthCm: k.widthCm, bump: k.bump, gloss: k.gloss, res: k.colorMode === 'photo' ? 2048 : 1024 });
+  Object.assign(photo, { kind, colorMode: k.colorMode, widthCm: k.widthCm, bump: k.bump, gloss: k.gloss, contrast: k.contrast, res: k.colorMode === 'photo' ? 2048 : 1024 });
   photo.name = `${k.label} ${userMaterials.filter((m) => m.kind === kind).length + 1}`;
   renderPhotoFields();
   drawPhotoPreview();
@@ -831,6 +937,9 @@ function renderPhotoFields() {
       <label class="check"><input type="radio" name="pcolor" value="tint" ${photo.colorMode === 'tint' ? 'checked' : ''}><span>질감만 쓰고 색은 hex로<small>거래처 원단·가죽 사진을 여러 색으로 쓸 때</small></span></label></div>
     <div class="field"><label for="pWidth">사진 가로의 실제 크기</label>
       <div class="input-row"><input class="input num" id="pWidth" inputmode="decimal" value="${photo.widthCm}"><span class="unit">cm</span><span class="note">${dims}</span></div></div>
+    <div class="field"><label for="pContrast">무늬 진하기</label>
+      <div class="range-row"><span class="note">연하게</span><input type="range" id="pContrast" min="0.1" max="1.5" step="0.05" value="${photo.contrast}"><span class="note">진하게</span></div>
+      <span class="note">사진 속 얼룩과 명암을 얼마나 살릴지예요. 가죽·원단은 연하게 시작해요.</span></div>
     <div class="field"><label for="pOverlap">이음매 부드럽게</label>
       <div class="range-row"><input type="range" id="pOverlap" min="0" max="0.4" step="0.02" value="${photo.overlap}"><span class="note mono">${Math.round(photo.overlap * 100)}%</span></div></div>
     <label class="check"><input type="checkbox" id="pFlatten" ${photo.flatten ? 'checked' : ''}><span>조명 얼룩 지우기<small>사진 한쪽이 어둡거나 반사가 있을 때</small></span></label>
@@ -849,25 +958,40 @@ function schedulePhotoPreview() {
   photoTimer = setTimeout(drawPhotoPreview, 180);
 }
 
+/** 2×2 tiles under a raking light (so bump and gloss show), with a ruler for the real size. */
 async function drawPhotoPreview() {
   const canvas = $('#photoCanvas'), g = canvas.getContext('2d');
   $('#photoEmpty').hidden = !!photo.bitmap;
   $('#photoSave').disabled = !photo.bitmap;
-  g.clearRect(0, 0, canvas.width, canvas.height);
-  if (!photo.bitmap) return;
-  const out = await processPhoto(photo.bitmap, photo, 384);
+  if (!photo.bitmap) { g.clearRect(0, 0, canvas.width, canvas.height); return; }
+  const seq = ++photoSeq;
+  const key = JSON.stringify([photo.kind, photo.colorMode, photo.overlap, photo.flatten, photo.contrast]);
+  if (photoProcessed?.bitmap !== photo.bitmap || photoProcessed.key !== key) {
+    const out = await processPhoto(photo.bitmap, photo, 384);
+    if (seq !== photoSeq) return;
+    photoProcessed = { bitmap: photo.bitmap, key, out };
+  }
+  const out = photoProcessed.out;
   const tw = out.width, th = out.height;
   const s = Math.min(canvas.width / (2 * tw), canvas.height / (2 * th));
   const w = tw * s, h = th * s, ox = (canvas.width - 2 * w) / 2, oy = (canvas.height - 2 * h) / 2;
-  g.imageSmoothingQuality = 'high';
-  for (let y = 0; y < 2; y++) for (let x = 0; x < 2; x++) g.drawImage(out.albedo, ox + x * w, oy + y * h, w, h);
-  if (photo.colorMode === 'tint') {
-    g.globalCompositeOperation = 'multiply';
-    g.fillStyle = photo.kind === 'fabric' ? '#8C8B88' : '#8B4A22';
-    g.fillRect(ox, oy, 2 * w, 2 * h);
-    g.globalCompositeOperation = 'source-over';
-  }
+  g.clearRect(0, 0, canvas.width, canvas.height);
+  const tint = photo.colorMode === 'tint' ? EXAMPLE_TINT[photo.kind] || EXAMPLE_TINT.fabric : null;
+  drawLitTiles(g, out, { tint, bump: photo.bump, gloss: photo.gloss }, ox, oy, 2 * w, 2 * h);
+  drawRuler(g, rulerFor(w, +photo.widthCm || KINDS[photo.kind].widthCm), ox + 14, oy + 2 * h - 14);
   $('#photoStatus').textContent = photo.colorMode === 'tint' ? '미리보기는 예시 색으로 칠했어요. 실제 색은 hex로 골라요.' : '';
+}
+
+function drawRuler(g, r, x, y) {
+  const bar = () => { g.beginPath(); g.moveTo(x, y - 9); g.lineTo(x, y); g.lineTo(x + r.px, y); g.lineTo(x + r.px, y - 9); };
+  g.save();
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  g.lineWidth = 7; g.strokeStyle = 'rgba(0,0,0,.45)'; bar(); g.stroke();
+  g.lineWidth = 3; g.strokeStyle = '#fff'; bar(); g.stroke();
+  g.font = '600 21px system-ui, sans-serif'; g.textBaseline = 'bottom';
+  g.lineWidth = 5; g.strokeStyle = 'rgba(0,0,0,.45)'; g.strokeText(`${r.cm}cm`, x + 7, y - 9);
+  g.fillStyle = '#fff'; g.fillText(`${r.cm}cm`, x + 7, y - 9);
+  g.restore();
 }
 
 async function loadPhoto(file) {
@@ -934,6 +1058,30 @@ function addUserMaterial(record) {
   userMaterials = [...userMaterials.filter((m) => m.id !== record.id), record.def];
 }
 
+/** In-page "are you sure?" (the program runs as a local file, so no browser pop-ups). Resolves true on 삭제. */
+function confirmBox(title, text, ok = '삭제') {
+  const d = $('#confirmDialog');
+  $('#confirmTitle').textContent = title;
+  $('#confirmText').textContent = text;
+  $('#confirmOk').textContent = ok;
+  d.returnValue = '';
+  d.showModal();
+  return new Promise((resolve) => d.addEventListener('close', () => resolve(d.returnValue === 'ok'), { once: true }));
+}
+
+/** Ask, then delete a material made from a photo (and drop the variants that use it). */
+async function askDeleteMaterial(id) {
+  const m = materialById(id);
+  if (!m || m.builtin) return false;
+  const used = S.groups.reduce((a, g) => a + g.choices.filter((c) => c.materialId === id).length, 0);
+  const ok = await confirmBox(`‘${m.name}’ 재질을 정말 삭제할까요?`,
+    `삭제하면 되돌릴 수 없어요.${used ? ` 이 재질로 고른 변형 ${used}개도 함께 빠져요.` : ''} 다른 PC로 옮겨 둔 .zip이 있다면 거기서 다시 가져올 수 있어요.`);
+  if (!ok) return false;
+  await deleteUserMaterial(id);
+  toast(`‘${m.name}’ 재질을 삭제했어요.`);
+  return true;
+}
+
 async function deleteUserMaterial(id) {
   await store.deleteMaterial(id);
   userMaterials = userMaterials.filter((m) => m.id !== id);
@@ -957,11 +1105,11 @@ function renderLibrary() {
     <section class="field"><span class="label">사진으로 만든 재질 (${mats.length})</span>
       <div class="lib-list">${mats.map((m) => `<div class="lib-row"><img data-swatch="${esc(m.id)}|${m.colorMode === 'photo' ? '' : NEUTRAL}" alt="">
         <div class="meta"><b>${esc(m.name)}</b><small>${esc(m.category)} · 가로 ${m.tileCm}cm · ${m.colorMode === 'photo' ? '사진 색' : 'hex로 색칠'}</small></div>
-        <button class="btn ghost small danger" type="button" data-action="lib-del-mat" data-id="${esc(m.id)}">지우기</button></div>`).join('') || '<p class="empty">아직 없어요. 3번 질감 목록의 ‘사진으로 만들기’로 만들 수 있어요.</p>'}</div></section>
+        <button class="btn ghost small danger" type="button" data-action="lib-del-mat" data-id="${esc(m.id)}">삭제</button></div>`).join('') || '<p class="empty">아직 없어요. 3번 질감 목록의 ‘사진으로 만들기’로 만들 수 있어요.</p>'}</div></section>
     <section class="field"><span class="label">저장한 색 (${S.colors.length})</span>
       <div class="lib-list">${S.colors.map((c, i) => `<div class="lib-row"><i style="background:${c.hex}"></i>
         <div class="meta"><input class="input" data-color-name="${i}" value="${esc(c.name === c.hex ? '' : c.name)}" placeholder="이름 (예: 코냑)"><small class="mono">${c.hex}</small></div>
-        <button class="btn ghost small danger" type="button" data-action="lib-del-color" data-index="${i}">지우기</button></div>`).join('') || '<p class="empty">아직 없어요. 3번에서 hex 코드를 추가하면 여기에 저장돼요.</p>'}</div>
+        <button class="btn ghost small danger" type="button" data-action="lib-del-color" data-index="${i}">삭제</button></div>`).join('') || '<p class="empty">아직 없어요. 3번에서 hex 코드를 추가하면 여기에 저장돼요.</p>'}</div>
       <div class="input-row"><input class="input" id="newColorName" placeholder="이름 (예: 코냑)"><input class="input mono" id="newColorHex" placeholder="#8B4A22"><button class="btn small" type="button" data-action="lib-add-color">색 추가</button></div>
     </section>`;
   hydrateSwatches($('#libraryBody'));
@@ -993,6 +1141,57 @@ document.addEventListener('click', async (e) => {
       refreshStyles();
       break;
     case 'reset-view': viewer.frame(); break;
+    case 'dims':
+      S.dimsOn = !S.dimsOn;
+      t.classList.toggle('on', S.dimsOn);
+      t.setAttribute('aria-pressed', S.dimsOn);
+      viewer.setDimensionsVisible(S.dimsOn);
+      break;
+    case 'swap-axes':
+      S.axesSwapped = !S.axesSwapped;
+      S.axes = swapAxes(S.axes);
+      applySize();
+      renderInfo();
+      renderMaterial();
+      renderExport();
+      toast('W와 D 방향을 바꿨어요. 3D 화면의 치수선을 확인하세요.');
+      break;
+    case 'size-add': {
+      const input = $('#sizeInput');
+      const list = parseSizes(input?.value || '');
+      if (!g || !list.length) { toast('1800×900처럼 가로×깊이(mm)로 넣어 주세요. 가로만 넣어도 돼요.'); break; }
+      let last = null;
+      for (const z of list) {
+        const same = g.sizes.find((x) => x.w === z.w && x.d === z.d);
+        last = same || { id: uid('z'), ...z };
+        if (!same) g.sizes.push(last);
+      }
+      g.activeSize = last.id;
+      updatePreview(g);
+      refreshAll();
+      break;
+    }
+    case 'size-add-current': {
+      if (!g) break;
+      const cur = groupSizeMm(g);
+      const z = { id: uid('z'), w: Math.round(cur.w), d: Math.round(cur.d) };
+      g.sizes.push(z);
+      g.activeSize = z.id;
+      updatePreview(g);
+      refreshAll();
+      break;
+    }
+    case 'size-preview': if (g) { g.activeSize = g.activeSize === t.dataset.id ? null : t.dataset.id; updatePreview(g); renderMaterial(); } break;
+    case 'size-remove':
+      e.stopPropagation();
+      if (g) {
+        g.sizes = g.sizes.filter((z) => z.id !== t.dataset.id);
+        if (g.activeSize === t.dataset.id) g.activeSize = null;
+        updatePreview(g);
+        refreshAll();
+      }
+      break;
+    case 'sizes-clear': if (g) { g.sizes = []; g.activeSize = null; updatePreview(g); refreshAll(); } break;
     case 'group-new': if (S.selection.size) newGroup([...S.selection]); break;
     case 'group-add': addToGroup(t.dataset.key, [...S.selection]); break;
     case 'group-activate': setActive(t.dataset.key); break;
@@ -1063,7 +1262,7 @@ document.addEventListener('click', async (e) => {
     case 'photo-pick': $('#photoInput').click(); break;
     case 'photo-kind': {
       const k = KINDS[t.dataset.kind];
-      Object.assign(photo, { kind: t.dataset.kind, colorMode: k.colorMode, widthCm: k.widthCm, bump: k.bump, gloss: k.gloss });
+      Object.assign(photo, { kind: t.dataset.kind, colorMode: k.colorMode, widthCm: k.widthCm, bump: k.bump, gloss: k.gloss, contrast: k.contrast });
       if (/^(대리석|나무|원단|가죽|기타) \d+$/.test(photo.name)) photo.name = `${k.label} ${userMaterials.filter((m) => m.kind === t.dataset.kind).length + 1}`;
       renderPhotoFields();
       schedulePhotoPreview();
@@ -1071,8 +1270,17 @@ document.addEventListener('click', async (e) => {
     }
     case 'photo-res': photo.res = +t.dataset.res; renderPhotoFields(); break;
     case 'photo-save': savePhotoMaterial(); break;
-    case 'lib-del-mat': await deleteUserMaterial(t.dataset.id); renderLibrary(); refreshAll(); break;
-    case 'lib-del-color': S.colors.splice(+t.dataset.index, 1); await saveColors(); renderLibrary(); renderMaterial(); break;
+    case 'mat-delete': e.stopPropagation(); if (await askDeleteMaterial(t.dataset.id)) refreshAll(); break;
+    case 'lib-del-mat': if (await askDeleteMaterial(t.dataset.id)) { renderLibrary(); refreshAll(); } break;
+    case 'lib-del-color': {
+      const c = S.colors[+t.dataset.index];
+      if (!c || !(await confirmBox(`저장한 색 ‘${c.name && c.name !== c.hex ? `${c.name} ` : ''}${c.hex}’을 정말 삭제할까요?`, '저장한 색 목록에서만 빠져요. 이미 고른 변형은 그대로 남아요.'))) break;
+      S.colors.splice(+t.dataset.index, 1);
+      await saveColors();
+      renderLibrary();
+      renderMaterial();
+      break;
+    }
     case 'lib-add-color': {
       const hex = parseHexes($('#newColorHex').value)[0];
       if (!hex) { toast('hex 코드를 넣어 주세요. 예: #8B4A22'); break; }
@@ -1100,14 +1308,12 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('input', (e) => {
   const t = e.target;
-  if (t.id === 'widthMm') {
+  if (t.id === 'sizeW' || t.id === 'sizeD' || t.id === 'sizeH') {
     const v = parseFloat(t.value.replace(/[^0-9.]/g, ''));
-    S.widthMm = v > 50 ? v : null;
-    updateDims();
-    refreshUVs();
-    if (S.file) store.setKV(`width:${S.file.name}`, S.widthMm);
+    S.size[t.id.slice(-1).toLowerCase()] = v >= 50 ? Math.round(v) : null;
+    updateSizeHints();
     clearTimeout(t._t);
-    t._t = setTimeout(renderExport, 400);
+    t._t = setTimeout(renderExport, 300);
   } else if (t.id === 'groupName') {
     const g = activeGroup();
     if (g) {
@@ -1121,16 +1327,18 @@ document.addEventListener('input', (e) => {
   else if (t.dataset.colorName !== undefined) {
     const c = S.colors[+t.dataset.colorName];
     if (c) { c.name = t.value.trim() || c.hex; clearTimeout(t._t); t._t = setTimeout(() => { saveColors(); renderMaterial(); }, 400); }
-  } else if (t.id === 'pWidth') { photo.widthCm = parseFloat(t.value) || photo.widthCm; }
+  } else if (t.id === 'pWidth') { photo.widthCm = parseFloat(t.value) || photo.widthCm; schedulePhotoPreview(); }
   else if (t.id === 'pOverlap') { photo.overlap = +t.value; t.nextElementSibling.textContent = `${Math.round(photo.overlap * 100)}%`; schedulePhotoPreview(); }
-  else if (t.id === 'pBump') photo.bump = +t.value;
-  else if (t.id === 'pGloss') photo.gloss = +t.value;
+  else if (t.id === 'pContrast') { photo.contrast = +t.value; schedulePhotoPreview(); }
+  else if (t.id === 'pBump') { photo.bump = +t.value; schedulePhotoPreview(); }
+  else if (t.id === 'pGloss') { photo.gloss = +t.value; schedulePhotoPreview(); }
   else if (t.id === 'pName') photo.name = t.value;
 });
 
 document.addEventListener('change', async (e) => {
   const t = e.target;
   if (t.id === 'fileInput') { openFile(t.files[0]); t.value = ''; }
+  else if (t.id === 'sizeW' || t.id === 'sizeD' || t.id === 'sizeH') { applySize(); renderMaterial(); renderExport(); }
   else if (t.id === 'compat') S.compat = t.checked;
   else if (t.id === 'photoInput') { loadPhoto(t.files[0]); t.value = ''; }
   else if (t.id === 'pFlatten') { photo.flatten = t.checked; schedulePhotoPreview(); }
@@ -1156,6 +1364,8 @@ document.addEventListener('toggle', (e) => { if (e.target.matches?.('details.mor
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !document.querySelector('dialog[open]') && S.selection.size) { S.selection.clear(); refreshAll(); }
   if (e.key === 'Enter' && e.target.id === 'hexInput') { e.preventDefault(); $('[data-action="hex-add"]')?.click(); }
+  if (e.key === 'Enter' && e.target.id === 'sizeInput') { e.preventDefault(); $('[data-action="size-add"]')?.click(); }
+  if (e.key === 'Enter' && /^size[WDH]$/.test(e.target.id)) e.target.blur();
 });
 
 // drag and drop: GLB anywhere on the page, photos onto the photo dialog

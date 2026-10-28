@@ -1,6 +1,6 @@
 {
   "input": "../samples/midnight blue_191970.glb",
-  "widthMm": 1800,
+  "size": { "w": 1800, "h": 812 },
   "groups": [
     {
       "name": "쿠션",

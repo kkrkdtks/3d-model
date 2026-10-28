@@ -7,7 +7,8 @@
 
 import { Document } from '@gltf-transform/core';
 import {
-  cloneDocument, compactPrimitive, prune, quantize, reorder, simplifyPrimitive, weldPrimitive,
+  cloneDocument, compactPrimitive, dequantize, prune, quantize, reorder, simplifyPrimitive, transformMesh,
+  transformPrimitive, weldPrimitive,
 } from '@gltf-transform/functions';
 import {
   EXTMeshoptCompression, EXTTextureWebP, KHRMaterialsClearcoat, KHRMaterialsSheen, KHRMeshQuantization,
@@ -15,6 +16,9 @@ import {
 import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import { segment, vertexNormals } from './segment.js';
 import { boxUV } from './uvbox.js';
+import {
+  bboxOf, fitToBox, furnitureAxes, mulMat4, stretchFor, stretchGeometry, transformPositions, xfMatrix,
+} from './size.js';
 
 export const DEFAULTS = {
   segment: { threshold: 60, dilate: 4, minArea: 0.002, smoothIters: 5 },
@@ -65,28 +69,35 @@ export function weldedPositions(doc, prim) {
   return { pos, index };
 }
 
-/** Find the parts of the model. Returns face labels in the original triangle order. */
-export function analyze(doc, segOpts = {}) {
-  const { prim, mesh } = mainPrimitive(doc);
-  const welded = weldedPositions(doc, prim);
-  const seg = segment(welded.pos, welded.index, { ...DEFAULTS.segment, ...segOpts });
-  return { prim, mesh, welded, ...seg };
+const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+/** Where the mesh sits in the scene (3DAISTUDIO lifts it onto the floor with a node offset). */
+export function meshWorldMatrix(doc, mesh) {
+  const node = doc.getRoot().listNodes().find((n) => n.getMesh() === mesh);
+  return node ? node.getWorldMatrix() : IDENTITY;
 }
 
-function bbox(pos) {
-  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < pos.length; i += 3)
-    for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], pos[i + k]); max[k] = Math.max(max[k], pos[i + k]); }
-  return { min, max, size: max.map((v, k) => v - min[k]) };
+export function applyMatrix(pos, m) {
+  for (let i = 0; i < pos.length; i += 3) {
+    const x = pos[i], y = pos[i + 1], z = pos[i + 2];
+    pos[i] = m[0] * x + m[4] * y + m[8] * z + m[12];
+    pos[i + 1] = m[1] * x + m[5] * y + m[9] * z + m[13];
+    pos[i + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
+  }
+  return pos;
 }
 
 /**
- * Model units -> metres, from the real width of the piece (its longest horizontal side).
- * 3DAISTUDIO normalises models, so the real size has to come from the user.
+ * Find the parts of the model. Positions are in scene ("world") units, face labels in the
+ * original triangle order; axes says which horizontal axis is the width and which the depth.
  */
-export function unitsToMeters(pos, widthMm) {
-  const { size } = bbox(pos);
-  return widthMm / 1000 / Math.max(size[0], size[2]);
+export function analyze(doc, segOpts = {}) {
+  const { prim, mesh } = mainPrimitive(doc);
+  const world = meshWorldMatrix(doc, mesh);
+  const welded = weldedPositions(doc, prim);
+  applyMatrix(welded.pos, world);
+  const seg = segment(welded.pos, welded.index, { ...DEFAULTS.segment, ...segOpts });
+  return { prim, mesh, world, welded, axes: furnitureAxes(welded.pos), bbox: bboxOf(welded.pos), ...seg };
 }
 
 function selectFaces(faceLabels, parts) {
@@ -125,14 +136,19 @@ export function simplifyIndexed(pos, index, ratio, error, lockBorder = true) {
 }
 
 /**
- * New geometry for faces that get a tiling material: welded, simplified, smooth normals and
- * box-projected UVs in model units (multiply by unitsToMeters for metres).
+ * New geometry for faces that get a tiling material: welded, in the output frame (metres, see
+ * outputTransform), optionally resized (opts.size {w, d} mm along opts.axes), simplified, with
+ * smooth normals and box-projected UVs in metres.
  * Shared by the export and the live preview, so what you see is what gets saved.
  */
 export function reskinGeometry(welded, faces, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const sub = compactIndexed(welded.pos, trianglesOf(welded.index, faces));
-  const simp = simplifyIndexed(sub.pos, sub.index, o.simplify, o.error, true);
+  const pos = o.xf ? transformPositions(sub.pos, o.xf) : sub.pos;
+  if (o.size) stretchGeometry(pos, null, stretchFor(bboxOf(pos), o.axes, o.size));
+  const box = bboxOf(pos);
+  const simp = simplifyIndexed(pos, sub.index, o.simplify, o.error, true);
+  fitToBox(simp.pos, box);
   const nrm = vertexNormals(simp.pos, simp.index, simp.pos.length / 3);
   return boxUV(simp.pos, nrm, simp.index, 1);
 }
@@ -142,49 +158,110 @@ export function facesOfParts(faceLabels, parts) {
 }
 
 /**
- * Replace the main primitive with one primitive per group.
- * groups: [{ name, parts: [partIds], reskin: true|false }]; faces not covered go to a kept "rest" group.
- * Re-skinned groups get welded, simplified geometry with box UVs in metres (TEXCOORD_0, rescaled per material).
+ * Put the document into the output frame and keep what stays as generated.
+ * xf: outputTransform (model units -> metres, standing on the floor). groups: [{ parts }] that
+ * will be replaced per variant; every other face goes to the "rest" primitive, which keeps the
+ * original texture. Node transforms are baked into the geometry, so the file is plain metres.
+ * Returns the context groupPrimitive and setVariant need.
  */
-export function buildGroups(doc, analysis, groups, opts = {}) {
+export function prepareOutput(doc, analysis, xf, groups, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
-  const { prim, mesh, welded, faceLabels } = analysis;
+  const { prim, mesh, faceLabels } = analysis;
   const buffer = doc.getRoot().listBuffers()[0];
-  const covered = new Set(groups.flatMap((g) => g.parts));
-  const allParts = [...new Set(faceLabels)];
-  const rest = allParts.filter((p) => !covered.has(p));
-  const list = [...groups];
-  if (rest.length) list.push({ name: 'rest', parts: rest, reskin: false });
-  const m2u = unitsToMeters(welded.pos, o.widthMm || 1000);
+  const out = xfMatrix(xf);
+  const A = mulMat4(out, analysis.world);
   const origIndex = indexArray(prim);
-  const out = [];
-
-  for (const g of list) {
-    const faces = selectFaces(faceLabels, g.parts);
-    if (!faces.length) continue;
-    let p;
-    if (g.reskin) {
-      const geo = reskinGeometry(welded, faces, o);
-      const uvMeters = geo.uv.map((x) => x * m2u);
-      p = doc.createPrimitive()
-        .setAttribute('POSITION', doc.createAccessor().setType('VEC3').setArray(geo.position).setBuffer(buffer))
-        .setAttribute('NORMAL', doc.createAccessor().setType('VEC3').setArray(geo.normal).setBuffer(buffer))
-        .setAttribute('TEXCOORD_0', doc.createAccessor().setType('VEC2').setArray(uvMeters.slice()).setBuffer(buffer))
-        .setIndices(doc.createAccessor().setType('SCALAR').setArray(geo.index).setBuffer(buffer));
-      p.setExtras({ group: g.name });
-      out.push({ ...g, prim: p, uvMeters });
-    } else {
-      p = prim.clone().setIndices(doc.createAccessor().setType('SCALAR').setArray(trianglesOf(origIndex, faces)).setBuffer(buffer));
-      compactPrimitive(p);
-      simplifyPrimitive(p, { simplifier: MeshoptSimplifier, ratio: o.keepSimplify, error: o.error, lockBorder: true });
-      p.setExtras({ group: g.name });
-      out.push({ ...g, prim: p });
-    }
-    mesh.addPrimitive(p);
+  const covered = new Set(groups.flatMap((g) => g.parts));
+  const restParts = [...new Set(faceLabels)].filter((p) => !covered.has(p));
+  let rest = null;
+  if (restParts.length) {
+    rest = prim.clone().setIndices(doc.createAccessor().setType('SCALAR').setArray(trianglesOf(origIndex, selectFaces(faceLabels, restParts))).setBuffer(buffer));
+    compactPrimitive(rest);
+    transformPrimitive(rest, A);
+    simplifyKept(rest, o);
+    rest.setExtras({ group: 'rest' });
+  }
+  // other meshes (rare in 3DAISTUDIO files) and all node transforms -> plain metres at the scene root
+  const scene = doc.getRoot().getDefaultScene() || doc.getRoot().listScenes()[0];
+  const nodes = doc.getRoot().listNodes().filter((n) => n.getMesh());
+  for (const node of nodes)
+    if (node.getMesh() !== mesh) transformMesh(node.getMesh(), mulMat4(out, node.getWorldMatrix()));
+  for (const node of nodes) {
+    node.setTranslation([0, 0, 0]).setRotation([0, 0, 0, 1]).setScale([1, 1, 1]);
+    if (scene && node.getParentNode()) scene.addChild(node);
   }
   mesh.removePrimitive(prim);
+  return { doc, analysis, xf, A, origIndex, mesh, rest, buffer, opts: o };
+}
+
+/**
+ * Geometry of one group for one variant option.
+ * reskin: new welded geometry with metre UVs for a tiling material; otherwise the original
+ * triangles with their own texture. size: { w, d } mm resizes the part (ends keep their shape).
+ * Returns { prim, uvMeters? }.
+ */
+export function groupPrimitive(ctx, group, { reskin, size = null }) {
+  const { doc, analysis, xf, A, origIndex, buffer, opts } = ctx;
+  const faces = selectFaces(analysis.faceLabels, group.parts);
+  if (!faces.length) return null;
+  const extras = { group: group.name, size: size ? { w: size.w ?? null, d: size.d ?? null } : null };
+  if (reskin) {
+    const geo = reskinGeometry(analysis.welded, faces, { ...opts, xf, size, axes: analysis.axes });
+    const p = doc.createPrimitive()
+      .setAttribute('POSITION', doc.createAccessor().setType('VEC3').setArray(geo.position).setBuffer(buffer))
+      .setAttribute('NORMAL', doc.createAccessor().setType('VEC3').setArray(geo.normal).setBuffer(buffer))
+      .setAttribute('TEXCOORD_0', doc.createAccessor().setType('VEC2').setArray(geo.uv.slice()).setBuffer(buffer))
+      .setIndices(doc.createAccessor().setType('SCALAR').setArray(geo.index).setBuffer(buffer))
+      .setExtras(extras);
+    return { prim: p, uvMeters: geo.uv };
+  }
+  const p = analysis.prim.clone().setIndices(doc.createAccessor().setType('SCALAR').setArray(trianglesOf(origIndex, faces)).setBuffer(buffer));
+  compactPrimitive(p);
+  transformPrimitive(p, A);
+  if (size) {
+    const pos = p.getAttribute('POSITION'), nrm = p.getAttribute('NORMAL');
+    const st = stretchFor(bboxOf(pos.getArray()), analysis.axes, size);
+    if (st) {
+      const P = pos.getArray().slice(), N = nrm ? Float32Array.from(nrm.getArray()) : null;
+      stretchGeometry(P, N, st);
+      pos.setArray(P);
+      if (N) nrm.setArray(N).setNormalized(false);
+    }
+  }
+  simplifyKept(p, opts);
+  p.setExtras(extras);
+  return { prim: p };
+}
+
+/** Simplify a part that keeps its original texture (its UV seams stay locked), keeping its exact extent. */
+function simplifyKept(p, o) {
+  const box = bboxOf(p.getAttribute('POSITION').getArray());
+  simplifyPrimitive(p, { simplifier: MeshoptSimplifier, ratio: o.keepSimplify, error: o.error, lockBorder: true });
+  const pos = p.getAttribute('POSITION');
+  pos.setArray(fitToBox(pos.getArray().slice(), box));
+}
+
+/** Show exactly these primitives (rest + one option per group) in the output mesh. */
+export function setVariant(ctx, built) {
+  for (const p of ctx.mesh.listPrimitives()) ctx.mesh.removePrimitive(p);
+  if (ctx.rest) ctx.mesh.addPrimitive(ctx.rest);
+  for (const b of built) if (b) ctx.mesh.addPrimitive(b.prim);
+}
+
+/**
+ * Every option is built: drop the full-resolution source primitive so each variant file is
+ * cloned and written without carrying it along.
+ */
+export function releaseSource(ctx) {
+  const prim = ctx.analysis.prim;
+  const accessors = [...prim.listAttributes(), prim.getIndices()].filter(Boolean);
   prim.dispose();
-  return out;
+  for (const a of accessors) if (a.listParents().length <= 1) a.dispose();
+}
+
+/** Older files from this program are quantized; work on plain floats. */
+export async function plainFloats(doc) {
+  if (doc.getRoot().listExtensionsUsed().some((e) => e.extensionName === 'KHR_mesh_quantization')) await doc.transform(dequantize());
 }
 
 // ---------- materials ----------

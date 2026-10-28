@@ -27,6 +27,7 @@
           <button type="button" data-action="view" data-view="parts">부분 보기</button>
         </div>
         <button class="btn ghost small" type="button" data-action="reset-view">시점 처음으로</button>
+        <button class="btn ghost small toggle on" type="button" data-action="dims" aria-pressed="true" title="W·D·H 치수선 보이기/숨기기">치수</button>
       </div>
       <div class="legend" id="legend" hidden></div>
       <div class="tip" id="tip" hidden></div>
@@ -73,7 +74,7 @@
             <input type="file" id="photoInput" accept="image/*" hidden>
           </div>
         </div>
-        <p class="note">이음매가 보이는지 확인할 수 있게 같은 무늬를 2×2로 이어 붙여 보여줘요.</p>
+        <p class="note">같은 무늬를 2×2로 이어 붙이고 비스듬히 빛을 비춰 보여줘요. 이음매, 요철, 광택을 확인하고, 왼쪽 아래 자로 실제 크기를 가늠해 보세요.</p>
       </div>
       <div class="photo-form" id="photoFields"></div>
     </div>
@@ -97,6 +98,20 @@
       <button class="btn ghost" type="button" data-action="lib-import">가져오기</button>
       <button class="btn" type="button" data-action="lib-export">내보내기 (.zip)</button>
       <input type="file" id="libInput" accept=".zip" hidden>
+    </footer>
+  </form>
+</dialog>
+
+<dialog class="dialog confirm" id="confirmDialog" aria-labelledby="confirmTitle">
+  <form method="dialog" class="dialog-body">
+    <div class="confirm-body">
+      <h2 id="confirmTitle"></h2>
+      <p id="confirmText"></p>
+    </div>
+    <footer class="dialog-foot">
+      <span class="note"></span>
+      <button class="btn ghost" value="cancel" type="submit" autofocus>취소</button>
+      <button class="btn danger-fill" value="ok" type="submit" id="confirmOk">삭제</button>
     </footer>
   </form>
 </dialog>
