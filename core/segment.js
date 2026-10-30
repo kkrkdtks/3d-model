@@ -335,7 +335,9 @@ function growByColor(label, count, color, trust, area, adj, minDist) {
  * Height just under the body's underside, table top or seat: of the levels above the floor where
  * a large area faces down, the biggest with the least under it (walls below at most four times
  * its area: not a shelf inside a bookcase), or a higher one nearly as good (a coffee table's top
- * over its shelf). Rungs between chair legs are too small to count. null when there is none.
+ * over its shelf). Rungs between chair legs are too small to count. A level is only reached
+ * through legs, not through a body's sides: a bed frame's bottom edge, not the bottom panel set
+ * up inside it. null when there is none.
  */
 export function undersideHeight(pos, index) {
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
@@ -371,10 +373,24 @@ export function undersideHeight(pos, index) {
     if (k >= 0.03 * B && walls[k] <= 4 * S[b]) levels.push({ k, score: S[b] / (1 + walls[k] / S[b]) });
   }
   if (!levels.length) return null;
+  // up from the lowest level only past what is as thin as the legs under it somewhere (rungs or a
+  // shelf between legs), never through the sides of a body that comes down all the way (a bed
+  // frame on short legs with its bottom panel set up inside)
+  levels.sort((a, b) => a.k - b.k);
+  const dens = (a, b) => (walls[b] - walls[a]) / (b - a);
+  const thinnest = (a, b) => {
+    let m = 0;
+    if (b - a >= W) { m = Infinity; for (let s = a; s + W <= b; s++) m = Math.min(m, dens(s, s + W)); }
+    return m;
+  };
+  const legs = dens(Math.ceil(0.015 * B), levels[0].k);
+  let top = 1;
+  while (top < levels.length && thinnest(levels[top - 1].k + W, levels[top].k) <= 4 * legs) top++;
+  const stack = levels.slice(0, top);
   // big, with little under it; a higher level nearly as good wins (a top over a shelf, not a
   // canopy over a whole bed)
-  const best = Math.max(...levels.map((l) => l.score));
-  const k = Math.max(...levels.filter((l) => l.score >= 0.75 * best).map((l) => l.k));
+  const best = Math.max(...stack.map((l) => l.score));
+  const k = Math.max(...stack.filter((l) => l.score >= 0.75 * best).map((l) => l.k));
   return lo[1] + k * step;
 }
 

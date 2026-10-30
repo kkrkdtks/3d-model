@@ -100,10 +100,15 @@ export function analyze(doc, segOpts = {}) {
   return { prim, mesh, world, welded, axes: furnitureAxes(welded.pos), bbox: bboxOf(welded.pos), ...seg };
 }
 
-/** The colour texture of a primitive and the UV set it uses, or null (plain colour, or a texture without image). */
+/**
+ * The colour texture of a primitive and the UV set it uses, or null (plain colour, or a texture
+ * without image). A "shaded" export has no colour texture and carries its look as glow instead.
+ */
 export function baseColorSource(prim) {
-  const mat = prim.getMaterial(), tex = mat?.getBaseColorTexture();
-  const texCoord = mat?.getBaseColorTextureInfo()?.getTexCoord() || 0;
+  const mat = prim.getMaterial();
+  const shaded = mat && !mat.getBaseColorTexture() && mat.getEmissiveTexture() && Math.max(...mat.getEmissiveFactor()) > 0;
+  const tex = shaded ? mat.getEmissiveTexture() : mat?.getBaseColorTexture();
+  const texCoord = (shaded ? mat.getEmissiveTextureInfo() : mat?.getBaseColorTextureInfo())?.getTexCoord() || 0;
   if (!tex?.getImage() || !prim.getAttribute(`TEXCOORD_${texCoord}`)) return null;
   return { image: tex.getImage(), mime: tex.getMimeType(), texCoord };
 }
