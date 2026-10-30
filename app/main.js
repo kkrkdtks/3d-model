@@ -64,8 +64,9 @@ const S = {
   file: null, info: null, parts: [], faceLabels: null, welded: null, dims: null, segKey: 0,
   size: { w: null, d: null, h: null }, axes: { w: 2, d: 0, front: 1 }, axesSwapped: false, dimsOn: true,
   sensitivity: DEFAULT_SENSITIVITY, segSensitivity: DEFAULT_SENSITIVITY,
-  // also split where the colour changes (a wooden base on fabric); height cuts made by hand
-  segColor: true, segColorUsed: true, hasColor: false, cuts: [], cut: null,
+  // also split where the colour changes (a wooden base on fabric), and off the legs or plinth under
+  // the body's underside; height cuts made by hand
+  segColor: true, segColorUsed: true, hasColor: false, segBase: true, segBaseUsed: true, cuts: [], cut: null,
   selection: new Set(), groups: [], active: null, view: 'material', hover: -1, compare: false,
   tab: '가죽', quality: 'standard', keptTex: 4096, compat: false, prefix: '', photos: true,
   colors: [], results: [], resultNote: '', exporting: false, confirmReseg: false, moreOpen: false,
@@ -323,13 +324,14 @@ async function openFile(file) {
     const key = workKey(file);
     const work = await store.getKV(key, null).catch(() => null);
     const sensitivity = work?.sensitivity ?? DEFAULT_SENSITIVITY;
-    // work saved before colours were used (v0.4) was split by shape alone
+    // work saved before colours (v0.4) or bases (v0.5.0) were split off was split without them
     const segColor = work?.colorSplit ?? !work?.groups?.length;
+    const segBase = work?.baseSplit ?? !work?.groups?.length;
     const buf = await file.arrayBuffer();
     const copy = buf.slice(0);
     const tRead = performance.now();
     const labels = unpackSplit(work?.split);
-    const segment = { threshold: 165 - sensitivity, color: segColor, cuts: Array.isArray(work?.cuts) ? work.cuts : [], labels };
+    const segment = { threshold: 165 - sensitivity, color: segColor, base: segBase, cuts: Array.isArray(work?.cuts) ? work.cuts : [], labels };
     const res = await call('open', { bytes: copy, segment }, { transfer: labels ? [copy, labels.buffer] : [copy], onProgress: (p) => busy(p.text, p.frac * 0.85) });
     const tWork = performance.now();
     const seg = { parts: res.parts, faceLabels: res.faceLabels };
@@ -341,7 +343,7 @@ async function openFile(file) {
     Object.assign(S, {
       file: { name: file.name, size: file.size, base: file.name.replace(/\.glb$/i, '') },
       info: res.info, parts: seg.parts, faceLabels: seg.faceLabels, welded: res.welded, sensitivity, segSensitivity: sensitivity,
-      segColor, segColorUsed: segColor, hasColor: res.hasColor, cuts: res.cuts, cut: null,
+      segColor, segColorUsed: segColor, hasColor: res.hasColor, segBase, segBaseUsed: segBase, cuts: res.cuts, cut: null,
       dims: { x: res.info.bbox.max[0] - res.info.bbox.min[0], y: res.info.bbox.max[1] - res.info.bbox.min[1], z: res.info.bbox.max[2] - res.info.bbox.min[2] },
       selection: new Set(), groups: [], active: null, hover: -1, results: [], resultNote: '', segKey: S.segKey + 1, confirmReseg: false,
       resumed: null,
@@ -387,11 +389,11 @@ async function resegment() {
   busy('부분 다시 나누는 중', 0.3);
   try {
     const threshold = 165 - S.sensitivity;
-    const res = await call('segment', { threshold, color: S.segColor });
+    const res = await call('segment', { threshold, color: S.segColor, base: S.segBase });
     for (const g of S.groups) viewer.setSkin(g.key, null);
     Object.assign(S, {
       parts: res.parts, faceLabels: res.faceLabels, selection: new Set(), groups: [], active: null, segKey: S.segKey + 1, confirmReseg: false,
-      segSensitivity: S.sensitivity, segColorUsed: S.segColor, cuts: [], cut: null, resumed: null,
+      segSensitivity: S.sensitivity, segColorUsed: S.segColor, segBaseUsed: S.segBase, cuts: [], cut: null, resumed: null,
     });
     viewer.setCutPreview(-1);
     previewCache.clear();
@@ -591,7 +593,7 @@ function unpackSplit(split) {
 function workSnapshot() {
   return {
     v: 1, saved: Date.now(),
-    sensitivity: S.segSensitivity, colorSplit: S.segColorUsed, cuts: S.cuts, partCount: S.parts.length, partSig: partSig(),
+    sensitivity: S.segSensitivity, colorSplit: S.segColorUsed, baseSplit: S.segBaseUsed, cuts: S.cuts, partCount: S.parts.length, partSig: partSig(),
     split: S.groups.length || S.cuts.length ? packSplit() : null,
     size: { ...S.size }, swapped: S.axesSwapped,
     groups: S.groups.map((g) => ({
@@ -869,6 +871,8 @@ function renderParts() {
         <label for="sensitivity">경계 민감도</label>
         <div class="range-row"><span class="note">덜 나눔</span><input type="range" id="sensitivity" min="25" max="140" step="5" value="${S.sensitivity}"><span class="note">더 나눔</span></div>
       </div>
+      <label class="check"><input type="checkbox" id="segBase" ${S.segBase ? 'checked' : ''}>
+        <span>받침대·다리 따로 나누기<small>소파 바닥면 아래의 다리나 받침대를 색과 상관없이 한 부분으로 나눠요.</small></span></label>
       <label class="check"><input type="checkbox" id="segColor" ${S.segColor && S.hasColor ? 'checked' : ''} ${S.hasColor ? '' : 'disabled'}>
         <span>색이 다른 곳도 나누기<small>${S.hasColor ? '나무 받침대나 금속 다리처럼 몸체와 색이 다르면 홈이 없어도 따로 나눠요.' : '이 모델은 텍스처가 없어서 모양으로만 나눠요.'}</small></span></label>
       <div><button class="btn ghost small" type="button" data-action="resegment">${S.confirmReseg ? '만든 그룹이 지워져요. 다시 나눌까요?' : '이 설정으로 다시 나누기'}</button></div>
@@ -1845,6 +1849,7 @@ document.addEventListener('change', async (e) => {
   else if (t.id === 'sizeW' || t.id === 'sizeD' || t.id === 'sizeH') { applySize(); renderMaterial(); renderExport(); }
   else if (t.id === 'compat') { S.compat = t.checked; saveWorkSoon(); }
   else if (t.id === 'segColor') { S.segColor = t.checked; S.confirmReseg = false; renderParts(); }
+  else if (t.id === 'segBase') { S.segBase = t.checked; S.confirmReseg = false; renderParts(); }
   else if (t.id === 'cutMm') setCutMm(parseFloat(t.value), 'change');
   else if (t.id === 'photos') { S.photos = t.checked; store.setKV('prefs', { photos: S.photos }); }
   else if (t.id === 'photoInput') { loadPhoto(t.files[0]); t.value = ''; }

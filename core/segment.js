@@ -324,6 +324,111 @@ function growByColor(label, count, color, trust, area, adj, minDist) {
   }
 }
 
+// ---------- base ----------
+//
+// Legs and plinths stand under the body. Seen from below, the body has a large flat underside
+// facing down (on legs), or an overhang above a recessed plinth; what is under that level is the
+// base, whatever its colour (white or black steel legs under fabric of any colour, wood).
+
+/**
+ * Height just under the body's underside: the lowest level above the floor where a large area
+ * faces down, far more than everything below it (leg brackets, feet). Only the lower third of
+ * the height is searched: higher up it would be a seat overhang or a table top. null when none.
+ */
+export function undersideHeight(pos, index) {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < pos.length; i += 3)
+    for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], pos[i + k]); hi[k] = Math.max(hi[k], pos[i + k]); }
+  const H = hi[1] - lo[1], footprint = (hi[0] - lo[0]) * (hi[2] - lo[2]), B = 400, step = H / B;
+  if (!(H > 0 && footprint > 0)) return null;
+  const down = new Float64Array(B);
+  for (let f = 0; f < index.length; f += 3) {
+    const a = index[f] * 3, b = index[f + 1] * 3, c = index[f + 2] * 3;
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, len = Math.hypot(nx, ny, nz);
+    if (!(ny < -0.7 * len)) continue;
+    const y = (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3 - lo[1];
+    if (y < 0.015 * H) continue; // standing on the floor: feet, the bottom of a plinth
+    down[Math.min(B - 1, Math.floor(y / step))] += len / 2;
+  }
+  // a 2% slice of the height holding a tenth of the footprint facing down, five times all below it
+  const W = 8;
+  let below = 0;
+  for (let b = 0; b + W <= 0.35 * B; b++) {
+    let win = 0;
+    for (let k = b; k < b + W; k++) win += down[k];
+    if (win >= 0.1 * footprint && win >= 5 * below) {
+      let acc = 0;
+      for (let k = b; k < b + W; k++) {
+        acc += down[k];
+        if (acc >= 0.1 * win) return k >= 0.03 * B ? lo[1] + k * step : null;
+      }
+    }
+    below += down[b];
+  }
+  return null;
+}
+
+/**
+ * Split off the base under height h: in every part that is mostly above it, the triangles below
+ * go to a base part they touch (legs that were parts of their own already), or else together to
+ * one new part. faceLabels and vertex labels change in place; returns the new number of parts.
+ */
+function splitBase(faceLabels, label, count, pos, index, faceArea, total, h) {
+  const nf = faceLabels.length;
+  const under = new Uint8Array(nf), below = new Float64Array(count), all = new Float64Array(count);
+  for (let f = 0; f < nf; f++) {
+    const l = faceLabels[f];
+    all[l] += faceArea[f];
+    if (pos[index[f * 3] * 3 + 1] + pos[index[f * 3 + 1] * 3 + 1] + pos[index[f * 3 + 2] * 3 + 1] < 3 * h) { under[f] = 1; below[l] += faceArea[f]; }
+  }
+  const base = (l) => below[l] >= 0.5 * all[l];
+  const moving = (f) => under[f] && !base(faceLabels[f]);
+  // pieces to move, joined through shared vertices
+  const parent = new Int32Array(pos.length / 3).fill(-1);
+  for (let f = 0; f < nf; f++) {
+    if (!moving(f)) continue;
+    for (let k = 0; k < 3; k++) { const v = index[f * 3 + k]; if (parent[v] < 0) parent[v] = v; }
+    for (let k = 1; k < 3; k++) {
+      const ra = find(parent, index[f * 3]), rb = find(parent, index[f * 3 + k]);
+      if (ra !== rb) parent[ra] = rb;
+    }
+  }
+  const pieces = new Map(); // root -> { area, touches: Map(base part -> shared vertices) }
+  for (let f = 0; f < nf; f++) {
+    if (!moving(f)) continue;
+    const r = find(parent, index[f * 3]);
+    if (!pieces.has(r)) pieces.set(r, { area: 0, touches: new Map() });
+    pieces.get(r).area += faceArea[f];
+  }
+  if (!pieces.size) return count;
+  for (let f = 0; f < nf; f++) {
+    if (!base(faceLabels[f])) continue;
+    for (let k = 0; k < 3; k++) {
+      const v = index[f * 3 + k];
+      if (parent[v] < 0) continue;
+      const t = pieces.get(find(parent, v)).touches;
+      t.set(faceLabels[f], (t.get(faceLabels[f]) || 0) + 1);
+    }
+  }
+  // a few stray triangles of a rim stay where they are; a new part must be worth having
+  let fresh = 0;
+  for (const p of pieces.values()) {
+    p.to = p.area < 1e-4 * total ? -1 : p.touches.size ? [...p.touches].sort((x, y) => y[1] - x[1])[0][0] : count;
+    if (p.to === count) fresh += p.area;
+  }
+  if (fresh < 5e-4 * total) for (const p of pieces.values()) if (p.to === count) p.to = -1;
+  for (let f = 0; f < nf; f++) {
+    if (!moving(f)) continue;
+    const to = pieces.get(find(parent, index[f * 3])).to;
+    if (to < 0) continue;
+    faceLabels[f] = to;
+    for (let k = 0; k < 3; k++) label[index[f * 3 + k]] = to;
+  }
+  return fresh >= 5e-4 * total ? count + 1 : count;
+}
+
 /**
  * Split a welded mesh into parts.
  * @param {Float32Array} pos  welded positions (xyz)
@@ -332,7 +437,8 @@ function growByColor(label, count, color, trust, area, adj, minDist) {
  *   dilate: rings used to close small gaps in a groove; minArea: smallest part (fraction of surface);
  *   color: material colour per vertex (vertexColors) to also split where the material changes colour
  *   and to make every boundary follow the colour edge (colorSplit: false uses it for boundaries only);
- *   colorDist: how different two materials must be
+ *   colorDist: how different two materials must be; base: false keeps legs and plinths under the
+ *   body's underside in the parts they touch
  * @returns {{faceLabels:Int32Array, vertexLabels:Int32Array, parts:Array}}
  */
 export function segment(pos, index, opts = {}) {
@@ -404,13 +510,18 @@ export function segment(pos, index, opts = {}) {
   if (labelCount === 0) label.fill(0);
 
   const faceLabels = new Int32Array(nf);
-  const count = Math.max(labelCount, 1);
-  const parts = Array.from({ length: count }, (_, id) => ({ id, area: 0, faces: 0, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }));
   for (let f = 0; f < nf; f++) {
     const a = label[index[f * 3]], b = label[index[f * 3 + 1]], c = label[index[f * 3 + 2]];
-    const l = Math.max(0, a === b || a === c ? a : b === c ? b : a);
-    faceLabels[f] = l;
-    const p = parts[l];
+    faceLabels[f] = Math.max(0, a === b || a === c ? a : b === c ? b : a);
+  }
+  let count = Math.max(labelCount, 1);
+  if (opts.base !== false) {
+    const h = undersideHeight(pos, index);
+    if (h !== null) count = splitBase(faceLabels, label, count, pos, index, faceArea, total, h);
+  }
+  const parts = Array.from({ length: count }, (_, id) => ({ id, area: 0, faces: 0, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }));
+  for (let f = 0; f < nf; f++) {
+    const p = parts[faceLabels[f]];
     p.faces++;
     p.area += faceArea[f];
     for (let k = 0; k < 3; k++) {
