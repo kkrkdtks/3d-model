@@ -7,6 +7,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 
 const CLICK_SLOP = 5;
+const CUT_COLOR = 0x2f7ee0;
 
 function shadowTexture() {
   const c = document.createElement('canvas');
@@ -156,6 +157,7 @@ export class Viewer {
       });
     }
     if (this.pickMesh) { this.pickScene.remove(this.pickMesh); this.pickMesh = null; }
+    this.setCutPreview(-1);
     for (const key of [...this.skins.keys()]) this.removeSkin(key);
     this.baseBox = null;
     this.baseBoxKey = '';
@@ -333,6 +335,51 @@ export class Viewer {
       m.visible = !!s.overlay;
       if (s.overlay) { m.color.set(s.overlay.color); m.opacity = s.overlay.opacity; }
     });
+    this.dirty = true;
+  }
+
+  /**
+   * Preview of cutting a part at a height: the piece below y (metres) is tinted, and a sheet marks
+   * the cut across the part's box (metres). part < 0 hides it.
+   */
+  setCutPreview(part, y, box) {
+    if (!this.cut) {
+      // the overlay is cut away above the plane: only what is below y stays tinted
+      this.renderer.localClippingEnabled = true;
+      const plane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+      const tint = new THREE.MeshBasicMaterial({
+        color: CUT_COLOR, transparent: true, opacity: 0.82, depthWrite: false, toneMapped: false, clippingPlanes: [plane],
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -8,
+      });
+      const sheet = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({
+        color: CUT_COLOR, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false, toneMapped: false,
+      }));
+      sheet.rotation.x = -Math.PI / 2;
+      sheet.renderOrder = 4;
+      sheet.add(new THREE.LineSegments(new THREE.EdgesGeometry(sheet.geometry), new THREE.LineBasicMaterial({ color: CUT_COLOR, toneMapped: false })));
+      this.cut = { plane, tint, hidden: new THREE.MeshBasicMaterial({ visible: false }), sheet, mesh: null, key: '' };
+    }
+    const c = this.cut;
+    if (!(Number.isInteger(part) && part >= 0) || !this.overlay) {
+      c.mesh?.removeFromParent();
+      c.sheet.removeFromParent();
+      c.mesh = null;
+      this.dirty = true;
+      return;
+    }
+    // shares the overlay's geometry, so it follows the current split
+    if (!c.mesh || c.mesh.geometry !== this.overlay.geometry || c.part !== part) {
+      c.mesh?.removeFromParent();
+      c.mesh = new THREE.Mesh(this.overlay.geometry, Array.from({ length: this.partCount }, (_, i) => (i === part ? c.tint : c.hidden)));
+      c.mesh.renderOrder = 3;
+      c.part = part;
+      this.model.add(c.mesh);
+    }
+    c.plane.constant = y;
+    const sx = box.max[0] - box.min[0], sz = box.max[2] - box.min[2];
+    c.sheet.scale.set(sx * 1.1 + 0.02, sz * 1.1 + 0.02, 1);
+    c.sheet.position.set((box.min[0] + box.max[0]) / 2, y, (box.min[2] + box.max[2]) / 2);
+    if (!c.sheet.parent) this.scene.add(c.sheet);
     this.dirty = true;
   }
 
@@ -590,7 +637,7 @@ export class Viewer {
 
     const r = this.renderer;
     const prevSize = r.getSize(new THREE.Vector2()), prevRatio = r.getPixelRatio();
-    const helpers = [this.dimGroup, this.overlay].filter((o) => o?.visible);
+    const helpers = [this.dimGroup, this.overlay, this.cut?.mesh, this.cut?.sheet].filter((o) => o?.visible && o.parent);
     const out = document.createElement('canvas');
     out.width = width;
     out.height = height;

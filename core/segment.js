@@ -101,16 +101,242 @@ function find(parent, x) {
   return x;
 }
 
+// ---------- colour ----------
+//
+// A wooden base or metal legs fused to a fabric body often meet without any groove, but the
+// texture changes colour there. AI textures also carry baked shading (dark creases, a darker
+// underside), so colours are compared as "material colour": hue and chroma measured relative to
+// lightness, with lightness itself counting little. A navy fabric and its near-black shadows
+// stay close; navy and walnut are far apart.
+
+const SRGB_LINEAR = Float32Array.from({ length: 256 }, (_, i) => { const c = i / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+const labF = (t) => (t > 216 / 24389 ? Math.cbrt(t) : ((24389 / 27) * t + 16) / 116);
+
+/** Material colour of 8-bit sRGB, written to out[o..o+2]: CIELAB with a, b scaled by 30 / (L + 10) and L by 1/4. */
+function materialColor(r, g, b, out, o) {
+  const R = SRGB_LINEAR[r], G = SRGB_LINEAR[g], B = SRGB_LINEAR[b];
+  const fx = labF((0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047);
+  const fy = labF(0.2126 * R + 0.7152 * G + 0.0722 * B);
+  const fz = labF((0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883);
+  const L = 116 * fy - 16, k = 30 / (Math.max(0, L) + 10);
+  out[o] = 0.25 * L; out[o + 1] = 500 * (fx - fy) * k; out[o + 2] = 200 * (fy - fz) * k;
+}
+
+function colorDist(c, i, d, j) {
+  const x = c[i] - d[j], y = c[i + 1] - d[j + 1], z = c[i + 2] - d[j + 2];
+  return Math.sqrt(x * x + y * y + z * z);
+}
+
+/**
+ * How much each vertex colour says about its material: nothing in near-black creases (L < 4,
+ * fully from L 14), and little in near-white glare (light and almost grey, as baked highlights on leather).
+ */
+function colorTrust(c) {
+  const t = new Float32Array(c.length / 3);
+  for (let v = 0; v < t.length; v++) {
+    const L = 4 * c[v * 3], chroma = (Math.hypot(c[v * 3 + 1], c[v * 3 + 2]) * (L + 10)) / 30;
+    const dark = Math.min(1, Math.max(0, (L - 4) / 10));
+    const glare = chroma < 12 ? Math.min(1, Math.max(0, (97 - L) / 12)) : 1;
+    t[v] = Math.min(dark, glare);
+  }
+  return t;
+}
+
+/**
+ * Material colour of every vertex from one texture sample per face (8-bit sRGB, 3 per face):
+ * averaged around each vertex, then smoothed over a couple of rings so fabric grain and wood
+ * figure do not read as edges.
+ */
+export function vertexColors(index, faceRGB, vertexCount, adj, smoothIters = 2) {
+  let c = new Float32Array(vertexCount * 3);
+  const n = new Uint32Array(vertexCount), m = new Float32Array(3);
+  for (let f = 0; f < index.length / 3; f++) {
+    materialColor(faceRGB[f * 3], faceRGB[f * 3 + 1], faceRGB[f * 3 + 2], m, 0);
+    for (let k = 0; k < 3; k++) {
+      const v = index[f * 3 + k];
+      c[v * 3] += m[0]; c[v * 3 + 1] += m[1]; c[v * 3 + 2] += m[2]; n[v]++;
+    }
+  }
+  for (let v = 0; v < vertexCount; v++) if (n[v]) { c[v * 3] /= n[v]; c[v * 3 + 1] /= n[v]; c[v * 3 + 2] /= n[v]; }
+  let tmp = new Float32Array(c.length);
+  for (let it = 0; it < smoothIters; it++) {
+    for (let v = 0; v < vertexCount; v++) {
+      let x = c[v * 3], y = c[v * 3 + 1], z = c[v * 3 + 2], k = 1;
+      for (let j = adj.offset[v]; j < adj.offset[v + 1]; j++) { const u = adj.nbr[j] * 3; x += c[u]; y += c[u + 1]; z += c[u + 2]; k++; }
+      tmp[v * 3] = x / k; tmp[v * 3 + 1] = y / k; tmp[v * 3 + 2] = z / k;
+    }
+    [c, tmp] = [tmp, c];
+  }
+  return c;
+}
+
+/**
+ * The main material colour of a region: 2-means over its vertex colours (weighted by area and
+ * trust), the centre of the cluster covering more surface. A region of one material gives its mean.
+ */
+function mainColor(verts, color, trust, area) {
+  const n = verts.length, w = new Float32Array(n), mean = new Float64Array(3);
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const v = verts[i], a = area[v] * trust[v];
+    w[i] = a; total += a;
+    mean[0] += a * color[v * 3]; mean[1] += a * color[v * 3 + 1]; mean[2] += a * color[v * 3 + 2];
+  }
+  if (!(total > 0)) return mean;
+  for (let k = 0; k < 3; k++) mean[k] /= total;
+  // start from the two sides of the axis with the most colour spread
+  const cov = new Float64Array(9);
+  for (let i = 0; i < n; i++) {
+    const v = verts[i] * 3;
+    const d = [color[v] - mean[0], color[v + 1] - mean[1], color[v + 2] - mean[2]];
+    for (let r = 0; r < 3; r++) for (let q = r; q < 3; q++) cov[r * 3 + q] += w[i] * d[r] * d[q];
+  }
+  cov[3] = cov[1]; cov[6] = cov[2]; cov[7] = cov[5];
+  let axis = [1, 1, 1];
+  for (let it = 0; it < 20; it++) {
+    const x = [0, 1, 2].map((r) => cov[r * 3] * axis[0] + cov[r * 3 + 1] * axis[1] + cov[r * 3 + 2] * axis[2]);
+    const l = Math.hypot(...x) || 1;
+    axis = x.map((q) => q / l);
+  }
+  const cluster = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const v = verts[i] * 3;
+    cluster[i] = (color[v] - mean[0]) * axis[0] + (color[v + 1] - mean[1]) * axis[1] + (color[v + 2] - mean[2]) * axis[2] >= 0 ? 1 : 0;
+  }
+  const centers = new Float64Array(6), ws = new Float64Array(2);
+  for (let it = 0; it < 8; it++) {
+    centers.fill(0); ws.fill(0);
+    for (let i = 0; i < n; i++) {
+      const k = cluster[i], v = verts[i] * 3;
+      ws[k] += w[i];
+      centers[k * 3] += w[i] * color[v]; centers[k * 3 + 1] += w[i] * color[v + 1]; centers[k * 3 + 2] += w[i] * color[v + 2];
+    }
+    if (!(ws[0] > 0 && ws[1] > 0)) return mean;
+    for (let k = 0; k < 2; k++) for (let d = 0; d < 3; d++) centers[k * 3 + d] /= ws[k];
+    let changed = 0;
+    for (let i = 0; i < n; i++) {
+      const v = verts[i] * 3, k = colorDist(color, v, centers, 0) <= colorDist(color, v, centers, 3) ? 0 : 1;
+      if (k !== cluster[i]) { cluster[i] = k; changed++; }
+    }
+    if (!changed) break;
+  }
+  return ws[0] >= ws[1] ? centers.slice(0, 3) : centers.slice(3, 6);
+}
+
+function vertexLists(label, count) {
+  const lists = Array.from({ length: count }, () => []);
+  for (let v = 0; v < label.length; v++) if (label[v] >= 0) lists[label[v]].push(v);
+  return lists;
+}
+
+/**
+ * Regions (label >= 0) are checked for surface far from their main colour (another material).
+ * A piece of it becomes a part of its own (a fused wooden base) when it is big, mostly well away
+ * from the main colour and not too ragged: baked highlights and shading fade in gradually, and a
+ * printed pattern breaks into many pieces with long outlines. Small pieces are left unlabelled so
+ * growByColor gives them to the neighbour they match (the top of a leg that ran into the frame).
+ * Everything else keeps its region's label. Relabels in place; returns the new number of labels.
+ */
+function splitByColor(label, count, color, trust, area, pos, edges, minPart, minDist) {
+  const nv = label.length;
+  const dist = new Float32Array(nv), far = new Uint8Array(nv);
+  vertexLists(label, count).forEach((verts) => {
+    const main = mainColor(verts, color, trust, area);
+    for (const v of verts) {
+      dist[v] = colorDist(color, v * 3, main, 0);
+      far[v] = trust[v] >= 0.5 && dist[v] >= minDist ? 1 : 0;
+    }
+  });
+  // pieces of off-colour surface inside one region
+  const parent = new Int32Array(nv);
+  for (let v = 0; v < nv; v++) parent[v] = v;
+  for (let i = 0; i < edges.ea.length; i++) {
+    const a = edges.ea[i], b = edges.eb[i];
+    if (!far[a] || !far[b] || label[a] !== label[b]) continue;
+    const ra = find(parent, a), rb = find(parent, b);
+    if (ra !== rb) parent[ra] = rb;
+  }
+  const piece = new Map(); // root -> { area, verts, core: area at twice the distance, outline }
+  for (let v = 0; v < nv; v++) {
+    if (!far[v]) continue;
+    const p = find(parent, v);
+    let e = piece.get(p);
+    if (!e) piece.set(p, (e = { area: 0, verts: 0, core: 0, outline: 0 }));
+    e.area += area[v]; e.verts++;
+    if (dist[v] >= 2 * minDist) e.core += area[v];
+  }
+  for (let i = 0; i < edges.ea.length; i++) {
+    const a = edges.ea[i], b = edges.eb[i];
+    if (far[a] === far[b] || label[a] !== label[b]) continue;
+    piece.get(find(parent, far[a] ? a : b)).outline += Math.hypot(pos[a * 3] - pos[b * 3], pos[a * 3 + 1] - pos[b * 3 + 1], pos[a * 3 + 2] - pos[b * 3 + 2]);
+  }
+  // outline² / (4π area) is 1 for a disc; a band around the base is a few tens, a pattern far more
+  const own = (e) => e.area >= minPart && e.core >= 0.5 * e.area && e.outline * e.outline <= 300 * 4 * Math.PI * e.area;
+  const small = (e) => e.area < minPart;
+  const pieces = new Int32Array(count), smalls = new Int32Array(count), farArea = new Float64Array(count), ownArea = new Float64Array(count);
+  for (const [p, e] of piece) {
+    const r = label[p];
+    farArea[r] += e.area;
+    if (own(e)) ownArea[r] += e.area;
+    if (e.area >= minPart / 10) pieces[r]++;
+    if (small(e) && e.verts >= 3) smalls[r]++;
+  }
+  // a region with many pieces is a patterned fabric or glare and stays whole; it splits only when
+  // its pieces of their own hold most of its off-colour surface
+  const pattern = (r) => pieces[r] > 6 || smalls[r] > 40;
+  const split = (r) => !pattern(r) && ownArea[r] >= 0.5 * farArea[r];
+  const ids = new Map();
+  const idOf = (k) => { if (!ids.has(k)) ids.set(k, ids.size); return ids.get(k); };
+  const next = new Int32Array(nv).fill(-1);
+  for (let v = 0; v < nv; v++) {
+    const r = label[v];
+    if (r < 0) continue;
+    if (!far[v] || pattern(r)) { next[v] = idOf(`r${r}`); continue; }
+    const p = find(parent, v), e = piece.get(p);
+    next[v] = own(e) && split(r) ? idOf(`p${p}`) : small(e) ? -1 : idOf(`r${r}`);
+  }
+  label.set(next);
+  return ids.size;
+}
+
+/**
+ * Grow labels back into unlabelled vertices (grooves, small off-colour pieces) ring by ring. A
+ * label first takes only vertices that match its own material colour, so a groove between a blue
+ * frame and a brown leg splits where blue turns brown, and the brown top of a leg goes to the leg.
+ * Dark creases match everything; what matches no neighbour (glare) is filled in afterwards.
+ */
+function growByColor(label, count, color, trust, area, adj, minDist) {
+  const nv = label.length;
+  const main = vertexLists(label, count).map((verts) => mainColor(verts, color, trust, area));
+  const matches = (u, l) => trust[u] * colorDist(color, u * 3, main[l], 0) < minDist;
+  for (const strict of [true, false]) {
+    let frontier = [];
+    for (let v = 0; v < nv; v++) if (label[v] >= 0) frontier.push(v);
+    while (frontier.length) {
+      const next = [];
+      for (const v of frontier)
+        for (let j = adj.offset[v]; j < adj.offset[v + 1]; j++) {
+          const u = adj.nbr[j];
+          if (label[u] < 0 && (!strict || matches(u, label[v]))) { label[u] = label[v]; next.push(u); }
+        }
+      frontier = next;
+    }
+  }
+}
+
 /**
  * Split a welded mesh into parts.
  * @param {Float32Array} pos  welded positions (xyz)
  * @param {Uint32Array} index triangle indices into pos
  * @param {object} opts threshold: valley strength (higher = fewer cuts);
- *   dilate: rings used to close small gaps in a groove; minArea: smallest part (fraction of surface)
+ *   dilate: rings used to close small gaps in a groove; minArea: smallest part (fraction of surface);
+ *   color: material colour per vertex (vertexColors) to also split where the material changes colour
+ *   and to make every boundary follow the colour edge (colorSplit: false uses it for boundaries only);
+ *   colorDist: how different two materials must be
  * @returns {{faceLabels:Int32Array, vertexLabels:Int32Array, parts:Array}}
  */
 export function segment(pos, index, opts = {}) {
-  const { threshold = 60, dilate = 4, minArea = 0.002, smoothIters = 5 } = opts;
+  const { threshold = 60, dilate = 4, minArea = 0.002, smoothIters = 5, color = null, colorDist: minColorDist = 14 } = opts;
   const nv = pos.length / 3, nf = index.length / 3;
   const edges = opts.edges || uniqueEdges(index, nv);
   const adj = opts.adj || adjacency(edges.ea, edges.eb, nv);
@@ -156,23 +382,29 @@ export function segment(pos, index, opts = {}) {
     if (!ids.has(r)) ids.set(r, ids.size);
     label[v] = ids.get(r);
   }
+  let labelCount = ids.size;
+  const trust = color && colorTrust(color);
+  if (color && labelCount && opts.colorSplit !== false) labelCount = splitByColor(label, labelCount, color, trust, area, pos, edges, minArea * total, minColorDist);
 
-  // grow labels back into the grooves (breadth-first from labelled vertices)
-  let frontier = [];
-  for (let v = 0; v < nv; v++) if (label[v] >= 0) frontier.push(v);
-  while (frontier.length) {
-    const next = [];
-    for (const v of frontier)
-      for (let j = adj.offset[v]; j < adj.offset[v + 1]; j++) {
-        const u = adj.nbr[j];
-        if (label[u] < 0) { label[u] = label[v]; next.push(u); }
-      }
-    frontier = next;
+  // grow labels back into the grooves: breadth-first, with colour keeping each material to itself
+  if (color) growByColor(label, labelCount, color, trust, area, adj, minColorDist);
+  else {
+    let frontier = [];
+    for (let v = 0; v < nv; v++) if (label[v] >= 0) frontier.push(v);
+    while (frontier.length) {
+      const next = [];
+      for (const v of frontier)
+        for (let j = adj.offset[v]; j < adj.offset[v + 1]; j++) {
+          const u = adj.nbr[j];
+          if (label[u] < 0) { label[u] = label[v]; next.push(u); }
+        }
+      frontier = next;
+    }
   }
-  if (ids.size === 0) label.fill(0);
+  if (labelCount === 0) label.fill(0);
 
   const faceLabels = new Int32Array(nf);
-  const count = Math.max(ids.size, 1);
+  const count = Math.max(labelCount, 1);
   const parts = Array.from({ length: count }, (_, id) => ({ id, area: 0, faces: 0, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }));
   for (let f = 0; f < nf; f++) {
     const a = label[index[f * 3]], b = label[index[f * 3 + 1]], c = label[index[f * 3 + 2]];

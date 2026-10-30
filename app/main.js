@@ -1,7 +1,7 @@
 // 가구 스킨 스튜디오 — screen logic.
 // Open a 3DAISTUDIO GLB, click the parts to change, pick textures and hex
 // colours, and save one compressed GLB per combination. Runs offline.
-import { zipSync } from 'fflate';
+import { deflateSync, inflateSync, zipSync } from 'fflate';
 import { Viewer } from './viewer.js';
 import { forgetSwatches, forgetTextures, makeThreeMaterial, swatch } from './materials.js';
 import { canvasBlob, drawLitTiles, glossToSurface, KINDS, processPhoto, rulerFor } from './photo.js';
@@ -46,6 +46,8 @@ const NEUTRAL = '#A89F94';
 const SWATCH_TINT = { leather: '#8E5B3A', fabric: '#A39A8C', paint: '#B7B1A8', metal: '#9EA0A3' };
 const GROUP_COLORS = ['#e07a2f', '#3b7dd8', '#2e9e6e', '#c9487a', '#8c6bd6', '#c9a227', '#3fa3a8', '#b35f3b'];
 const SEL_COLOR = '#ff8a3d';
+// the piece below a height cut, shown while choosing the height
+const CUT_COLOR = '#2f7ee0';
 const QUALITY = {
   high: { label: '고품질', simplify: 0.4, keepSimplify: 0.5, note: '아주 가까이 봐도 원본과 같아요. 파일이 조금 커요.' },
   standard: { label: '표준', simplify: 0.25, keepSimplify: 0.35, note: '보통 거리에서는 원본과 구별이 안 돼요. 추천해요.' },
@@ -62,6 +64,8 @@ const S = {
   file: null, info: null, parts: [], faceLabels: null, welded: null, dims: null, segKey: 0,
   size: { w: null, d: null, h: null }, axes: { w: 2, d: 0, front: 1 }, axesSwapped: false, dimsOn: true,
   sensitivity: DEFAULT_SENSITIVITY, segSensitivity: DEFAULT_SENSITIVITY,
+  // also split where the colour changes (a wooden base on fabric); height cuts made by hand
+  segColor: true, segColorUsed: true, hasColor: false, cuts: [], cut: null,
   selection: new Set(), groups: [], active: null, view: 'material', hover: -1, compare: false,
   tab: '가죽', quality: 'standard', keptTex: 4096, compat: false, prefix: '', photos: true,
   colors: [], results: [], resultNote: '', exporting: false, confirmReseg: false, moreOpen: false,
@@ -315,21 +319,20 @@ async function openFile(file) {
     saveWorkNow();
     prev = { file: S.file, key: S.workKey };
     S.workKey = null;
-    const buf = await file.arrayBuffer();
-    const copy = buf.slice(0);
-    const tRead = performance.now();
-    const analysis = call('open', { bytes: copy }, { transfer: [copy], onProgress: (p) => busy(p.text, p.frac * 0.85) });
-    const res = await analysis;
-    const tWork = performance.now();
     // the work saved for this model last time: split it the same way so its groups fit again
     const key = workKey(file);
     const work = await store.getKV(key, null).catch(() => null);
     const sensitivity = work?.sensitivity ?? DEFAULT_SENSITIVITY;
-    let seg = { parts: res.parts, faceLabels: res.faceLabels };
-    if (sensitivity !== DEFAULT_SENSITIVITY) {
-      busy('지난번처럼 부분 나누는 중', 0.87);
-      seg = await call('segment', { threshold: 165 - sensitivity });
-    }
+    // work saved before colours were used (v0.4) was split by shape alone
+    const segColor = work?.colorSplit ?? !work?.groups?.length;
+    const buf = await file.arrayBuffer();
+    const copy = buf.slice(0);
+    const tRead = performance.now();
+    const labels = unpackSplit(work?.split);
+    const segment = { threshold: 165 - sensitivity, color: segColor, cuts: Array.isArray(work?.cuts) ? work.cuts : [], labels };
+    const res = await call('open', { bytes: copy, segment }, { transfer: labels ? [copy, labels.buffer] : [copy], onProgress: (p) => busy(p.text, p.frac * 0.85) });
+    const tWork = performance.now();
+    const seg = { parts: res.parts, faceLabels: res.faceLabels };
     busy('화면 준비 중', 0.9);
     const tView = performance.now();
     await viewer.loadModel(buf, res.info.indexCount);
@@ -338,6 +341,7 @@ async function openFile(file) {
     Object.assign(S, {
       file: { name: file.name, size: file.size, base: file.name.replace(/\.glb$/i, '') },
       info: res.info, parts: seg.parts, faceLabels: seg.faceLabels, welded: res.welded, sensitivity, segSensitivity: sensitivity,
+      segColor, segColorUsed: segColor, hasColor: res.hasColor, cuts: res.cuts, cut: null,
       dims: { x: res.info.bbox.max[0] - res.info.bbox.min[0], y: res.info.bbox.max[1] - res.info.bbox.min[1], z: res.info.bbox.max[2] - res.info.bbox.min[2] },
       selection: new Set(), groups: [], active: null, hover: -1, results: [], resultNote: '', segKey: S.segKey + 1, confirmReseg: false,
       resumed: null,
@@ -383,12 +387,13 @@ async function resegment() {
   busy('부분 다시 나누는 중', 0.3);
   try {
     const threshold = 165 - S.sensitivity;
-    const res = await call('segment', { threshold });
+    const res = await call('segment', { threshold, color: S.segColor });
     for (const g of S.groups) viewer.setSkin(g.key, null);
     Object.assign(S, {
       parts: res.parts, faceLabels: res.faceLabels, selection: new Set(), groups: [], active: null, segKey: S.segKey + 1, confirmReseg: false,
-      segSensitivity: S.sensitivity, resumed: null,
+      segSensitivity: S.sensitivity, segColorUsed: S.segColor, cuts: [], cut: null, resumed: null,
     });
+    viewer.setCutPreview(-1);
     previewCache.clear();
     viewer.setParts(S.welded.pos, S.welded.index, res.faceLabels, res.parts.length);
     refreshAll();
@@ -396,6 +401,76 @@ async function resegment() {
     toast(`부분 ${res.parts.length}개로 다시 나눴어요.`);
   } catch (e) {
     toast(`다시 나누지 못했어요: ${e.message}`, 6000);
+  } finally {
+    idle();
+  }
+}
+
+// ---------- cutting a part at a height ----------
+
+// height from the floor in mm <-> model y, at the current real size
+const yToMm = (y) => { const xf = currentXf(); return (y * xf.scale[1] + xf.offset[1]) * 1000; };
+const mmToY = (mm) => { const xf = currentXf(); return (mm / 1000 - xf.offset[1]) / xf.scale[1]; };
+
+/** Heights (mm) a part can be cut at: just inside its bottom and top. */
+function cutRange(part) {
+  const p = S.parts[part];
+  return { lo: Math.ceil(yToMm(p.min[1])) + 1, hi: Math.floor(yToMm(p.max[1])) - 1 };
+}
+
+function startCut(part) {
+  const { lo, hi } = cutRange(part);
+  if (hi <= lo) { toast('이 부분은 너무 얇아서 높이로 나눌 수 없어요.'); return; }
+  // a base is often about a tenth of the furniture's height; a thin part starts in its middle
+  const mm = Math.round(Math.min(lo + 0.1 * realSize().h, (lo + hi) / 2));
+  S.cut = { part, y: mmToY(mm) };
+  refreshAll();
+  showCut();
+  $('#cutRange')?.focus();
+}
+
+function showCut() {
+  if (!S.cut) { viewer.setCutPreview(-1); return; }
+  const p = S.parts[S.cut.part];
+  viewer.setCutPreview(S.cut.part, yToMm(S.cut.y) / 1000, bboxWith({ min: p.min, max: p.max }, currentXf()));
+}
+
+/** Slider or box moved: keep the other in step without redrawing the panel. */
+function setCutMm(mm, from) {
+  if (!S.cut || !Number.isFinite(mm)) return;
+  const { lo, hi } = cutRange(S.cut.part);
+  const v = Math.min(hi, Math.max(lo, Math.round(mm)));
+  S.cut.y = mmToY(v);
+  if (from !== 'range' && $('#cutRange')) $('#cutRange').value = v;
+  if (from !== 'box' && $('#cutMm')) $('#cutMm').value = v;
+  showCut();
+}
+
+function endCut() {
+  if (!S.cut) return;
+  S.cut = null;
+  viewer.setCutPreview(-1);
+}
+
+async function applyCut() {
+  const c = S.cut;
+  if (!c) return;
+  busy('부분 나누는 중', 0.4);
+  try {
+    const res = await call('cut', { part: c.part, y: c.y });
+    const piece = res.parts.length - 1;
+    endCut();
+    Object.assign(S, { parts: res.parts, faceLabels: res.faceLabels, segKey: S.segKey + 1, cuts: [...S.cuts, { part: c.part, y: c.y }], selection: new Set([piece]) });
+    previewCache.clear();
+    viewer.setParts(S.welded.pos, S.welded.index, res.faceLabels, res.parts.length);
+    // a group that had the whole part keeps the upper piece; its preview is rebuilt
+    for (const g of S.groups) if (g.parts.includes(c.part)) updatePreview(g);
+    refreshAll();
+    renderInfo();
+    saveWorkSoon();
+    toast('아래쪽을 새 부분으로 나눴어요. ‘새 그룹으로’를 누르면 따로 재질을 입힐 수 있어요.', 6000);
+  } catch (e) {
+    toast(e.message, 6000);
   } finally {
     idle();
   }
@@ -415,6 +490,8 @@ function suggestName(parts) {
     for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p.min[k]); hi[k] = Math.max(hi[k], p.max[k]); }
   }
   sx = hi[0] - lo[0]; sz = hi[2] - lo[2];
+  // one low piece under the whole footprint (on the floor or on legs): a base
+  if (parts.length === 1 && minY < b.min[1] + 0.2 * H && maxY < b.min[1] + 0.4 * H && sx > 0.7 * S.dims.x && sz > 0.7 * S.dims.z) return '받침대';
   if (minY < b.min[1] + 0.03 * H && area < 8) return '다리';
   // a thin slab across the very top: a table top (checked before 몸체, it is often the biggest part)
   if (maxY > b.max[1] - 0.05 * H && hi[1] - lo[1] < 0.25 * Math.max(sx, sz) && Math.max(sx, sz) > 0.6 * Math.max(S.dims.x, S.dims.z)) return '상판';
@@ -483,10 +560,39 @@ const workKey = (f) => `work:${f.name}|${f.size}`;
 const partSig = () => S.parts.map((p) => p.faces).join(',');
 let workTimer = 0;
 
+// The split itself (a part id per triangle, about 200 KB packed) is kept with the work, so it
+// comes back exactly, whatever the browser, the PC or a later version of the splitting does.
+let packed = { key: -1, split: null };
+function packSplit() {
+  if (packed.key !== S.segKey) {
+    const ids = S.parts.length <= 256 ? Uint8Array.from(S.faceLabels) : Uint16Array.from(S.faceLabels);
+    const bytes = deflateSync(new Uint8Array(ids.buffer), { level: 6 });
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    packed = { key: S.segKey, split: { bits: ids.BYTES_PER_ELEMENT * 8, faces: ids.length, data: btoa(bin) } };
+  }
+  return packed.split;
+}
+
+function unpackSplit(split) {
+  if (!split?.data) return null;
+  try {
+    const bin = atob(split.data), bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const raw = inflateSync(bytes);
+    const ids = split.bits === 16 ? new Uint16Array(raw.buffer, raw.byteOffset, raw.byteLength >> 1) : raw;
+    return ids.length === split.faces ? Int32Array.from(ids) : null;
+  } catch (e) {
+    console.warn('저장한 부분 나누기를 읽지 못했어요', e);
+    return null;
+  }
+}
+
 function workSnapshot() {
   return {
     v: 1, saved: Date.now(),
-    sensitivity: S.segSensitivity, partCount: S.parts.length, partSig: partSig(),
+    sensitivity: S.segSensitivity, colorSplit: S.segColorUsed, cuts: S.cuts, partCount: S.parts.length, partSig: partSig(),
+    split: S.groups.length || S.cuts.length ? packSplit() : null,
     size: { ...S.size }, swapped: S.axesSwapped,
     groups: S.groups.map((g) => ({
       name: g.name, parts: g.parts, color: g.color, rotate: g.rotate, pick: g.pick,
@@ -612,6 +718,7 @@ function applySize() {
   viewer.setOutputTransform(currentXf());
   for (const g of S.groups) updatePreview(g);
   refreshStyles();
+  if (S.cut) { renderParts(); showCut(); }
   viewer.frame();
   if (S.file) store.setKV(`size:${S.file.name}`, { ...S.size, swapped: S.axesSwapped });
 }
@@ -651,7 +758,7 @@ async function updatePreview(g) {
     } else {
       // original look, resized: done on the screen side from the loaded model
       const st = stretchFor(groupBox(g), S.axes, size);
-      viewer.setResizedOriginal(g.key, g.parts, (P, N) => stretchGeometry(P, N, st), JSON.stringify([g.parts, currentXf(), size.w, size.d]), g.parts[0]);
+      viewer.setResizedOriginal(g.key, g.parts, (P, N) => stretchGeometry(P, N, st), JSON.stringify([S.segKey, g.parts, currentXf(), size.w, size.d]), g.parts[0]);
     }
     g.skinShown = true;
     refreshStyles();
@@ -686,6 +793,7 @@ function removeChoice(g, id) {
 // ---------- rendering the panel ----------
 
 function refreshAll() {
+  if (S.cut && !(S.selection.size === 1 && S.selection.has(S.cut.part))) endCut();
   renderParts();
   renderMaterial();
   renderExport();
@@ -747,20 +855,38 @@ function renderParts() {
       <button class="btn small" type="button" data-action="group-new">새 그룹으로</button>
       ${S.groups.map((g) => `<button class="btn ghost small" type="button" data-action="group-add" data-key="${g.key}">＋ ${esc(g.name)}</button>`).join('')}
       <button class="btn ghost small" type="button" data-action="select-similar">비슷한 부분도</button>
+      ${sel.length === 1 && !S.cut ? '<button class="btn ghost small" type="button" data-action="cut-start">높이로 나누기</button>' : ''}
       <button class="btn ghost small" type="button" data-action="select-clear">해제</button></div>` : ''}
+    ${S.cut ? cutBox() : ''}
     <div class="groups">${S.groups.map((g) => `
       <div class="group ${g.key === S.active ? 'on' : ''}" data-action="group-activate" data-key="${g.key}">
         <span class="dot" style="background:${g.color}"></span>
         <span class="name">${esc(g.name)} <span class="sub">· 부분 ${g.parts.length}개 · 변형 ${g.choices.length || g.sizes.length ? optionsOf(g).length : 0}개</span></span>
         <button class="icon-btn" type="button" data-action="group-delete" data-key="${g.key}" title="그룹 지우기" aria-label="${esc(g.name)} 그룹 지우기">×</button>
       </div>`).join('') || '<p class="empty">아직 그룹이 없어요. 부분을 클릭한 뒤 ‘새 그룹으로’를 누르세요.</p>'}</div>
-    <details class="more" ${S.confirmReseg || S.moreOpen ? 'open' : ''}><summary>부분이 잘 안 나뉘었나요?</summary>
+    <details class="more" ${S.confirmReseg || S.moreOpen ? 'open' : ''}><summary>부분이 잘 안 나뉘었나요?</summary><div class="more-body">
       <div class="field">
         <label for="sensitivity">경계 민감도</label>
         <div class="range-row"><span class="note">덜 나눔</span><input type="range" id="sensitivity" min="25" max="140" step="5" value="${S.sensitivity}"><span class="note">더 나눔</span></div>
-        <button class="btn ghost small" type="button" data-action="resegment">${S.confirmReseg ? '만든 그룹이 지워져요. 다시 나눌까요?' : '이 민감도로 다시 나누기'}</button>
       </div>
-    </details>`;
+      <label class="check"><input type="checkbox" id="segColor" ${S.segColor && S.hasColor ? 'checked' : ''} ${S.hasColor ? '' : 'disabled'}>
+        <span>색이 다른 곳도 나누기<small>${S.hasColor ? '나무 받침대나 금속 다리처럼 몸체와 색이 다르면 홈이 없어도 따로 나눠요.' : '이 모델은 텍스처가 없어서 모양으로만 나눠요.'}</small></span></label>
+      <div><button class="btn ghost small" type="button" data-action="resegment">${S.confirmReseg ? '만든 그룹이 지워져요. 다시 나눌까요?' : '이 설정으로 다시 나누기'}</button></div>
+      <p class="hint">받침대가 몸체나 방석에 붙어 있으면 그 부분을 클릭하고 <b>높이로 나누기</b>를 누르세요.${S.cuts.length ? ` 높이로 나눈 곳 ${S.cuts.length}개는 다시 나누면 없어져요.` : ''}</p>
+    </div></details>`;
+}
+
+/** Choosing the height to cut the selected part at: the piece below turns blue on the model. */
+function cutBox() {
+  const { lo, hi } = cutRange(S.cut.part), mm = Math.round(yToMm(S.cut.y));
+  return `<div class="cutbox">
+    <span class="label">높이로 나누기 · 부분 ${S.cut.part + 1}</span>
+    <p class="hint"><i class="swatch" style="background:${CUT_COLOR}"></i>파란색으로 칠해진 아래쪽이 새 부분이 돼요. 받침대 윗선에 맞춰 보세요.</p>
+    <div class="range-row"><span class="note mono">${fmtInt(lo)}</span><input type="range" id="cutRange" min="${lo}" max="${hi}" step="1" value="${mm}" aria-label="나눌 높이"><span class="note mono">${fmtInt(hi)}</span></div>
+    <div class="cut-row"><label>바닥에서 <input class="input num" id="cutMm" inputmode="numeric" autocomplete="off" value="${mm}"> mm 아래</label>
+      <span class="cut-actions"><button class="btn small" type="button" data-action="cut-apply">나누기</button>
+      <button class="btn ghost small" type="button" data-action="cut-cancel">취소</button></span></div>
+  </div>`;
 }
 
 function matCard(m, g) {
@@ -1573,6 +1699,9 @@ document.addEventListener('click', async (e) => {
       if (!S.groups.length || S.confirmReseg) resegment();
       else { S.confirmReseg = true; renderParts(); }
       break;
+    case 'cut-start': if (S.selection.size === 1) startCut([...S.selection][0]); break;
+    case 'cut-apply': applyCut(); break;
+    case 'cut-cancel': endCut(); renderParts(); break;
     case 'tab': S.tab = t.dataset.tab; renderMaterial(); break;
     case 'mat-pick': {
       if (!g) break;
@@ -1697,6 +1826,8 @@ document.addEventListener('input', (e) => {
     }
   } else if (t.id === 'prefix') { S.prefix = t.value.trim(); saveWorkSoon(); }
   else if (t.id === 'sensitivity') { S.sensitivity = +t.value; S.confirmReseg = false; }
+  else if (t.id === 'cutRange') setCutMm(+t.value, 'range');
+  else if (t.id === 'cutMm') { const v = parseFloat(t.value); if (v > 0) { clearTimeout(t._t); t._t = setTimeout(() => setCutMm(v, 'box'), 250); } }
   else if (t.dataset.colorName !== undefined) {
     const c = S.colors[+t.dataset.colorName];
     if (c) { c.name = t.value.trim() || c.hex; clearTimeout(t._t); t._t = setTimeout(() => { saveColors(); renderMaterial(); }, 400); }
@@ -1713,6 +1844,8 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'fileInput') { openFile(t.files[0]); t.value = ''; }
   else if (t.id === 'sizeW' || t.id === 'sizeD' || t.id === 'sizeH') { applySize(); renderMaterial(); renderExport(); }
   else if (t.id === 'compat') { S.compat = t.checked; saveWorkSoon(); }
+  else if (t.id === 'segColor') { S.segColor = t.checked; S.confirmReseg = false; renderParts(); }
+  else if (t.id === 'cutMm') setCutMm(parseFloat(t.value), 'change');
   else if (t.id === 'photos') { S.photos = t.checked; store.setKV('prefs', { photos: S.photos }); }
   else if (t.id === 'photoInput') { loadPhoto(t.files[0]); t.value = ''; }
   else if (t.id === 'pFlatten') { photo.flatten = t.checked; schedulePhotoPreview(); }
@@ -1744,6 +1877,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target.id === 'hexInput') { e.preventDefault(); $('[data-action="hex-add"]')?.click(); }
   if (e.key === 'Enter' && e.target.id === 'sizeInput') { e.preventDefault(); $('[data-action="size-add"]')?.click(); }
   if (e.key === 'Enter' && /^size[WDH]$/.test(e.target.id)) e.target.blur();
+  if (e.key === 'Enter' && e.target.id === 'cutMm') { e.preventDefault(); setCutMm(parseFloat(e.target.value), 'box'); applyCut(); }
 });
 
 // drag and drop: GLB anywhere on the page, photos onto the photo dialog
@@ -1781,4 +1915,4 @@ bindDrop($('#photoDrop'), loadPhoto);
   refreshAll();
 })();
 
-window.__studio = { S, openFile, runExport, viewer, newGroup, addChoice, updatePreview, setActive, call, saveWorkNow, setCompare };
+window.__studio = { S, openFile, runExport, viewer, newGroup, addChoice, updatePreview, setActive, call, saveWorkNow, setCompare, refreshAll };

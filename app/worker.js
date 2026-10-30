@@ -8,11 +8,11 @@ import { ImageUtils, WebIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import {
-  DEFAULTS, applyMatrix, applyToGroup, compressKeptTextures, createMaterial, encodeVariant, facesOfParts,
-  groupPrimitive, mainPrimitive, meshWorldMatrix, plainFloats, prepareOutput, releaseSource, reskinGeometry,
-  setVariant, weldedPositions,
+  DEFAULTS, applyMatrix, applyToGroup, baseColorSource, compressKeptTextures, createMaterial, cutPart, encodeVariant,
+  faceColors, facesOfParts, groupPrimitive, mainPrimitive, meshWorldMatrix, partStats, plainFloats, prepareOutput,
+  releaseSource, reskinGeometry, setVariant, weldedPositions,
 } from '../core/skin.js';
-import { adjacency, segment, uniqueEdges, valleyCurvature, vertexNormals } from '../core/segment.js';
+import { adjacency, segment, uniqueEdges, valleyCurvature, vertexColors, vertexNormals } from '../core/segment.js';
 import { bboxOf, furnitureAxes } from '../core/size.js';
 import { stripWebPProfile } from './webp.js';
 
@@ -32,6 +32,8 @@ function timer() {
   };
 }
 
+const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 async function getIO() {
   await ready;
   io ??= new WebIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({
@@ -40,7 +42,10 @@ async function getIO() {
   return io;
 }
 
-async function open({ bytes }, progress) {
+/**
+ * args: { bytes, segment: { threshold, color, cuts } } (how to split it: see runSegment)
+ */
+async function open({ bytes, segment: segOpts = {} }, progress) {
   const io = await getIO();
   const T = timer();
   progress('파일 읽는 중', 0.05);
@@ -53,21 +58,32 @@ async function open({ bytes }, progress) {
     const size = t.getSize();
     return { name: t.getName() || t.getURI(), mime: t.getMimeType(), bytes: t.getImage()?.byteLength || 0, width: size?.[0] || 0, height: size?.[1] || 0 };
   });
+  // the colour texture decodes on another thread while the shape is worked out; it needs this
+  // thread for a moment to start and to finish, hence the short breaks below
+  const colorImage = readColorImage(prim).catch((e) => { console.warn('색을 읽지 못했어요', e); return null; });
+  await pause();
   progress('모양 정리 중', 0.2);
   // scene ("world") units: 3DAISTUDIO lifts the mesh onto the floor with a node offset
   const welded = weldedPositions(doc, prim);
   applyMatrix(welded.pos, meshWorldMatrix(doc, mesh));
   T.mark('weld');
+  await pause();
   progress('경계 찾는 중', 0.4);
   const nv = welded.pos.length / 3;
   const edges = uniqueEdges(welded.index, nv);
   const adj = adjacency(edges.ea, edges.eb, nv);
   T.mark('edges');
+  await pause();
   const curvature = valleyCurvature(welded.pos, adj, edges, vertexNormals(welded.pos, welded.index, nv), DEFAULTS.segment.smoothIters);
   T.mark('curvature');
-  Object.assign(state, { bytes: new Uint8Array(bytes), welded, edges, adj, curvature, previews: new Map() });
+  progress('색 살피는 중', 0.65);
+  const image = await colorImage;
+  T.mark('color image');
+  const color = image && vertexColors(welded.index, faceColors(prim, image.texCoord, image.pixels, image.size, image.size), nv, adj);
+  T.mark('color');
+  Object.assign(state, { bytes: new Uint8Array(bytes), welded, edges, adj, curvature, color, previews: new Map() });
   progress('부분 나누는 중', 0.75);
-  const seg = runSegment({});
+  const seg = runSegment(segOpts);
   T.mark('segment');
   return {
     timings: T.done(),
@@ -82,15 +98,84 @@ async function open({ bytes }, progress) {
   };
 }
 
-function runSegment(opts) {
+/**
+ * The colour texture read at 1024² (fine enough to tell a wooden base from the fabric, coarse
+ * enough to ignore the weave): { pixels (RGBA), size, texCoord }, or null without a texture.
+ */
+async function readColorImage(prim) {
+  const src = baseColorSource(prim);
+  if (!src) return null;
+  const N = 1024, opts = { colorSpaceConversion: 'none', premultiplyAlpha: 'none' };
+  const ctx = new OffscreenCanvas(N, N).getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingQuality = 'high';
+  // ImageDecoder keeps decoding on its own thread while this one is busy, and reads a JPEG
+  // straight at the smaller size; createImageBitmap only gets on with it when this thread is free
+  if (self.ImageDecoder && await ImageDecoder.isTypeSupported(src.mime)) {
+    const decoder = new ImageDecoder({ data: src.image, type: src.mime, desiredWidth: N, desiredHeight: N, ...opts });
+    try {
+      const { image } = await decoder.decode();
+      ctx.drawImage(image, 0, 0, N, N);
+      image.close();
+    } finally {
+      decoder.close();
+    }
+  } else {
+    const bmp = await createImageBitmap(new Blob([src.image], { type: src.mime }), { ...opts, resizeWidth: N, resizeHeight: N, resizeQuality: 'high' });
+    ctx.drawImage(bmp, 0, 0);
+    bmp.close();
+  }
+  return { pixels: ctx.getImageData(0, 0, N, N).data, size: N, texCoord: src.texCoord };
+}
+
+/**
+ * Split into parts. opts: threshold (valley strength), color (also split where the material
+ * colour changes, default on), cuts ([{ part, y }] height cuts to repeat, in order; the ones
+ * that could be made come back as cuts), labels (a split saved earlier, one part id per
+ * triangle: used as it is, cuts included, when it fits this model).
+ */
+function runSegment({ color = true, cuts = [], labels = null, ...opts } = {}) {
   const { welded, edges, adj, curvature } = state;
-  const seg = segment(welded.pos, welded.index, { ...DEFAULTS.segment, ...opts, edges, adj, curvature });
-  state.faceLabels = seg.faceLabels;
+  let done = cuts;
+  if (labels?.length === welded.index.length / 3) {
+    state.faceLabels = Int32Array.from(labels);
+    const count = state.faceLabels.reduce((m, l) => Math.max(m, l + 1), 0);
+    state.parts = partStats(welded.pos, welded.index, state.faceLabels, Array.from({ length: count }, (_, i) => i));
+  } else {
+    const seg = segment(welded.pos, welded.index, { ...DEFAULTS.segment, ...opts, edges, adj, curvature, color: color ? state.color : null });
+    state.faceLabels = seg.faceLabels;
+    state.parts = seg.parts.map(({ id, area, faces, min, max }) => ({ id, area, faces, min, max }));
+    done = cuts.filter((c) => applyCut(c.part, c.y));
+  }
+  state.totalArea = state.parts.reduce((sum, p) => sum + p.area, 0);
   state.previews = new Map();
+  return { ...splitResult(), hasColor: !!state.color, cuts: done };
+}
+
+function splitResult() {
   return {
-    faceLabels: seg.faceLabels.slice(),
-    parts: seg.parts.map(({ id, areaPct, faces, min, max }) => ({ id, areaPct, faces, min, max })),
+    faceLabels: state.faceLabels.slice(),
+    parts: state.parts.map(({ id, area, faces, min, max }) => ({ id, areaPct: (100 * area) / state.totalArea, faces, min, max })),
   };
+}
+
+/** Triangles of a part below height y (scene units) become a new part; false when one side would be empty. */
+function applyCut(part, y) {
+  const { pos, index } = state.welded, p = state.parts[part];
+  if (!p) return false;
+  const labels = state.faceLabels.slice(), id = state.parts.length;
+  const moved = cutPart(pos, index, labels, part, y, id);
+  if (!moved || moved === p.faces) return false;
+  state.faceLabels = labels;
+  const [rest, piece] = partStats(pos, index, labels, [part, id]);
+  state.parts[part] = rest;
+  state.parts.push(piece);
+  return true;
+}
+
+function cut({ part, y }) {
+  if (!applyCut(part, y)) throw new Error('그 높이에서는 나눌 게 없어요. 높이를 바꿔 보세요.');
+  state.previews = new Map();
+  return splitResult();
 }
 
 /**
@@ -222,6 +307,7 @@ async function exportVariants(args, progress, sendFile) {
 const handlers = {
   open: (args, progress) => open(args, progress),
   segment: (args) => runSegment(args),
+  cut: (args) => cut(args),
   preview: (args) => preview(args),
   export: (args, progress, sendFile) => exportVariants(args, progress, sendFile),
 };

@@ -164,6 +164,14 @@ a { color: var(--accent); }
 
 .selbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; background: var(--accent-soft); border-radius: 8px; padding: 8px 10px; }
 .selbar strong { margin-right: auto; }
+.cutbox { display: grid; gap: 8px; border: 1px solid var(--line-strong); border-left: 3px solid #2f7ee0; border-radius: 8px; padding: 10px 12px; background: var(--surface); }
+.cutbox .hint { margin: 0; }
+.cutbox .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.cutbox .range-row input[type=range] { accent-color: #2f7ee0; }
+.cut-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; font-size: 13px; }
+.cut-row label { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+.cut-row .input.num { width: 84px; }
+.cut-actions { display: flex; gap: 6px; }
 .groups { display: grid; gap: 6px; }
 .group { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; cursor: pointer; background: var(--surface); }
 .group.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
@@ -173,6 +181,8 @@ a { color: var(--accent); }
 .group-name-input { font-weight: 600; border: 1px solid var(--line-strong); border-radius: 6px; padding: 2px 6px; width: 100%; }
 details.more summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 details.more[open] summary { margin-bottom: 8px; }
+.more-body { display: grid; gap: 10px; }
+.more-body .hint { margin: 0; }
 .range-row { display: flex; gap: 10px; align-items: center; }
 .range-row input[type=range] { flex: 1; accent-color: var(--accent); }
 

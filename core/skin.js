@@ -100,6 +100,62 @@ export function analyze(doc, segOpts = {}) {
   return { prim, mesh, world, welded, axes: furnitureAxes(welded.pos), bbox: bboxOf(welded.pos), ...seg };
 }
 
+/** The colour texture of a primitive and the UV set it uses, or null (plain colour, or a texture without image). */
+export function baseColorSource(prim) {
+  const mat = prim.getMaterial(), tex = mat?.getBaseColorTexture();
+  const texCoord = mat?.getBaseColorTextureInfo()?.getTexCoord() || 0;
+  if (!tex?.getImage() || !prim.getAttribute(`TEXCOORD_${texCoord}`)) return null;
+  return { image: tex.getImage(), mime: tex.getMimeType(), texCoord };
+}
+
+/**
+ * Texture colour under the middle of every triangle (8-bit sRGB, 3 per face, in the original
+ * triangle order) from decoded RGBA pixels, row 0 at the top as in glTF.
+ */
+export function faceColors(prim, texCoord, pixels, width, height) {
+  const uv = floatArray(prim.getAttribute(`TEXCOORD_${texCoord}`)), index = indexArray(prim);
+  const nf = index.length / 3, out = new Uint8Array(nf * 3);
+  for (let f = 0; f < nf; f++) {
+    let u = 0, v = 0;
+    for (let c = 0; c < 3; c++) { const i = index[f * 3 + c]; u += uv[i * 2]; v += uv[i * 2 + 1]; }
+    u /= 3; v /= 3;
+    const x = Math.min(width - 1, Math.floor((u - Math.floor(u)) * width));
+    const y = Math.min(height - 1, Math.floor((v - Math.floor(v)) * height));
+    const o = (y * width + x) * 4;
+    out[f * 3] = pixels[o]; out[f * 3 + 1] = pixels[o + 1]; out[f * 3 + 2] = pixels[o + 2];
+  }
+  return out;
+}
+
+/** Area, triangle count and box of the given parts (pos in the units the box should be in). */
+export function partStats(pos, index, faceLabels, ids) {
+  const stats = new Map(ids.map((id) => [id, { id, area: 0, faces: 0, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] }]));
+  for (let f = 0; f < faceLabels.length; f++) {
+    const p = stats.get(faceLabels[f]);
+    if (!p) continue;
+    const a = index[f * 3] * 3, b = index[f * 3 + 1] * 3, c = index[f * 3 + 2] * 3;
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
+    p.area += Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2;
+    p.faces++;
+    for (const i of [a, b, c]) for (let d = 0; d < 3; d++) { p.min[d] = Math.min(p.min[d], pos[i + d]); p.max[d] = Math.max(p.max[d], pos[i + d]); }
+  }
+  return ids.map((id) => stats.get(id));
+}
+
+/**
+ * Cut one part at a height: its triangles whose middle is below y become part newId.
+ * Changes faceLabels in place; returns how many triangles moved.
+ */
+export function cutPart(pos, index, faceLabels, part, y, newId) {
+  let moved = 0;
+  for (let f = 0; f < faceLabels.length; f++) {
+    if (faceLabels[f] !== part) continue;
+    if (pos[index[f * 3] * 3 + 1] + pos[index[f * 3 + 1] * 3 + 1] + pos[index[f * 3 + 2] * 3 + 1] < 3 * y) { faceLabels[f] = newId; moved++; }
+  }
+  return moved;
+}
+
 function selectFaces(faceLabels, parts) {
   const set = new Set(parts), out = [];
   for (let f = 0; f < faceLabels.length; f++) if (set.has(faceLabels[f])) out.push(f);
