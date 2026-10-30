@@ -3,3 +3,7 @@ scratch/
 out/
 *.log
 __pycache__/
+
+# dev tools: generated test furniture and dumps
+dev/furniture/models/
+dev/**/*.bin

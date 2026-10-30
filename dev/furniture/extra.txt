@@ -1,0 +1,6 @@
+models/armchair_dining.glb
+models/canopy_bed.glb
+models/console_drawer.glb
+models/etagere.glb
+models/table_tilted.glb
+models/tub_chair.glb

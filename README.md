@@ -89,13 +89,14 @@
 | 폴더 | 내용 |
 | --- | --- |
 | `app/` | 프로그램 화면(`main.js`, `viewer.js`), 백그라운드 처리(`worker.js`), 사진 재질(`photo.js`), 저장(`store.js`) |
-| `core/segment.js` | 자동 부분 나누기. 방석과 프레임이 만나는 오목한 홈을 따라 자른다. |
+| `core/segment.js` | 자동 부분 나누기. 방석과 프레임이 만나는 오목한 홈, 색이 바뀌는 곳, 몸체 밑면 아래의 다리·받침대를 따라 자른다. |
 | `core/uvbox.js` | 실제 크기 기준 텍스처 좌표(가죽 결·원단 짜임 크기가 어디서나 같게). |
 | `core/size.js` | 실제 크기(W·D·H) 맞추기, 가로·깊이 방향 찾기, 상판 크기 바꾸기(끝은 그대로, 가운데만 늘이기). |
 | `core/skin.js` | 부분별 재질 적용, 변형 생성, 압축(meshopt + WebP). 프로그램과 명령줄 도구가 함께 쓴다. |
 | `cli/skin.mjs` | 명령줄 도구. |
 | `materials/` | 기본 질감 라이브러리(`library.json` + 텍스처). 색은 hex 코드로 곱해서 입힌다. |
 | `tools/` | 질감 추가(`add-material.mjs`), 임시 질감 생성(`procedural_textures.py`). |
+| `dev/` | 시험 도구: 시험용 가구 만들기, 앱 시험, 실제 모델 점검 (`dev/README.md`). |
 | `dist/` | 완성된 프로그램(`skin-studio.html`, 파일 하나). |
 
 ```bash

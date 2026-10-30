@@ -1,0 +1,31 @@
+// Look at a real model in the app: material view, parts view from the side and from below.
+const { chromium } = require('playwright');
+const fs = require('fs');
+const [GLB, H, OUTDIR] = process.argv.slice(2);
+const OUT = OUTDIR || __dirname + '/out/shots';
+fs.mkdirSync(OUT, { recursive: true });
+const log = (...a) => console.log(...a);
+(async () => {
+  const b = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const p = await (await b.newContext({ viewport: { width: 1300, height: 860 } })).newPage();
+  p.on('pageerror', (e) => log('pageerror:', e.message));
+  p.on('console', (m) => { if (/열기 시간|error|오류/i.test(m.text())) log('console:', m.text().slice(0, 300)); });
+  await p.goto('file://' + require('path').resolve(__dirname, '../../dist/skin-studio.html'));
+  const S = (f, a) => p.evaluate(f, a);
+  await p.setInputFiles('#fileInput', GLB);
+  await p.waitForFunction(() => window.__studio?.S.workKey, null, { timeout: 300000 });
+  await p.fill('#sizeH', String(H)); await p.press('#sizeH', 'Enter');
+  const info = await S(() => { const s = window.__studio.S; return { parts: s.parts.map((q) => ({ id: q.id, area: +q.areaPct.toFixed(1), y: [+q.min[1].toFixed(3), +q.max[1].toFixed(3)] })), hasColor: s.hasColor, underside: s.info.underside, dims: s.dims }; });
+  log(JSON.stringify(info));
+  const cam = async (fy, fd) => S(([fy, fd]) => { const v = window.__studio.viewer; v.frame(); const t = v.controls.target, c = v.camera.position; c.set(t.x + (c.x - t.x) * fd, t.y + (c.y - t.y) * fy, t.z + (c.z - t.z) * fd); v.controls.update(); v.dirty = true; }, [fy, fd]);
+  await cam(1, 1); await p.waitForTimeout(1200);
+  await p.locator('#stage').screenshot({ path: `${OUT}/material.png` });
+  await p.click('[data-action="view"][data-view="parts"]');
+  await p.waitForTimeout(800);
+  await p.locator('#stage').screenshot({ path: `${OUT}/parts.png` });
+  await cam(-0.6, 1); await p.waitForTimeout(1200);
+  await p.locator('#stage').screenshot({ path: `${OUT}/parts_below.png` });
+  await cam(0.15, 1.1); await p.waitForTimeout(1200);
+  await p.locator('#stage').screenshot({ path: `${OUT}/parts_side.png` });
+  await b.close();
+})().catch((e) => { console.error('TEST FAILED', e); process.exit(1); });
