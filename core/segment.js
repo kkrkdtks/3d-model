@@ -327,13 +327,15 @@ function growByColor(label, count, color, trust, area, adj, minDist) {
 // ---------- base ----------
 //
 // Legs and plinths stand under the body. Seen from below, the body has a large flat underside
-// facing down (on legs), or an overhang above a recessed plinth; what is under that level is the
-// base, whatever its colour (white or black steel legs under fabric of any colour, wood).
+// facing down: a sofa, bed or cabinet on legs, the overhang above a recessed plinth, a table top,
+// a chair or stool seat. What is under that level is the base, whatever its colour (white or
+// black steel legs under fabric of any colour, wood).
 
 /**
- * Height just under the body's underside: the lowest level above the floor where a large area
- * faces down, far more than everything below it (leg brackets, feet). Only the lower third of
- * the height is searched: higher up it would be a seat overhang or a table top. null when none.
+ * Height just under the body's underside, table top or seat: of the levels above the floor where
+ * a large area faces down, the biggest with the least under it (walls below at most four times
+ * its area: not a shelf inside a bookcase), or a higher one nearly as good (a coffee table's top
+ * over its shelf). Rungs between chair legs are too small to count. null when there is none.
  */
 export function undersideHeight(pos, index) {
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
@@ -341,52 +343,63 @@ export function undersideHeight(pos, index) {
     for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], pos[i + k]); hi[k] = Math.max(hi[k], pos[i + k]); }
   const H = hi[1] - lo[1], footprint = (hi[0] - lo[0]) * (hi[2] - lo[2]), B = 400, step = H / B;
   if (!(H > 0 && footprint > 0)) return null;
-  const down = new Float64Array(B);
+  const down = new Float64Array(B), walls = new Float64Array(B + 1); // walls: area of steep faces below each bin
   for (let f = 0; f < index.length; f += 3) {
     const a = index[f] * 3, b = index[f + 1] * 3, c = index[f + 2] * 3;
     const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
     const vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, len = Math.hypot(nx, ny, nz);
-    if (!(ny < -0.7 * len)) continue;
-    const y = (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3 - lo[1];
-    if (y < 0.015 * H) continue; // standing on the floor: feet, the bottom of a plinth
-    down[Math.min(B - 1, Math.floor(y / step))] += len / 2;
+    const y = (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3 - lo[1], bin = Math.min(B - 1, Math.floor(y / step));
+    if (ny < -0.7 * len) { if (y >= 0.015 * H) down[bin] += len / 2; } // feet and plinth bottoms stand on the floor
+    else if (ny <= 0.7 * len) walls[bin + 1] += len / 2;
   }
-  // a 2% slice of the height holding a tenth of the footprint facing down, five times all below it
-  const W = 8;
-  let below = 0;
-  for (let b = 0; b + W <= 0.35 * B; b++) {
-    let win = 0;
-    for (let k = b; k < b + W; k++) win += down[k];
-    if (win >= 0.1 * footprint && win >= 5 * below) {
-      let acc = 0;
-      for (let k = b; k < b + W; k++) {
-        acc += down[k];
-        if (acc >= 0.1 * win) return k >= 0.03 * B ? lo[1] + k * step : null;
-      }
-    }
-    below += down[b];
+  for (let b = 1; b <= B; b++) walls[b] += walls[b - 1];
+  // area facing down in every 2% slice of the height
+  const W = 8, n = B - W + 1, S = new Float64Array(n);
+  for (let b = 0; b < n; b++) for (let k = b; k < b + W; k++) S[b] += down[k];
+  const levels = [];
+  for (let b = 0; b < n; b++) {
+    if (S[b] < 0.1 * footprint) continue;
+    let peak = true;
+    for (let o = Math.max(0, b - W); o <= Math.min(n - 1, b + W) && peak; o++) if (S[o] > S[b] || (S[o] === S[b] && o < b)) peak = false;
+    if (!peak) continue;
+    // past the lowest tenth of the slice, then down through anything still facing down right under
+    // it (a tilted or wavy underside, a seam that bulges) so all of the body stays above
+    let k = b, acc = down[b];
+    while (k < b + W - 1 && acc < 0.1 * S[b]) acc += down[++k];
+    while (k > 0 && down[k - 1] >= 0.01 * S[b]) k--;
+    if (k >= 0.03 * B && walls[k] <= 4 * S[b]) levels.push({ k, score: S[b] / (1 + walls[k] / S[b]) });
   }
-  return null;
+  if (!levels.length) return null;
+  // big, with little under it; a higher level nearly as good wins (a top over a shelf, not a
+  // canopy over a whole bed)
+  const best = Math.max(...levels.map((l) => l.score));
+  const k = Math.max(...levels.filter((l) => l.score >= 0.75 * best).map((l) => l.k));
+  return lo[1] + k * step;
 }
 
 /**
- * Split off the base under height h: in every part that is mostly above it, the triangles below
- * go to a base part they touch (legs that were parts of their own already), or else together to
- * one new part. faceLabels and vertex labels change in place; returns the new number of parts.
+ * Split off the base under height h: in every part that is not almost all below it, the triangles
+ * below go to a base part they touch (legs that were parts of their own already), or else
+ * together to one new part. Legs that go on up past h (beside a rounded body or a drawer box,
+ * under a tilted top) take their steep sides along until they meet the body. faceLabels and
+ * vertex labels change in place; returns the new number of parts.
  */
 function splitBase(faceLabels, label, count, pos, index, faceArea, total, h) {
-  const nf = faceLabels.length;
-  const under = new Uint8Array(nf), below = new Float64Array(count), all = new Float64Array(count);
+  const nf = faceLabels.length, nv = pos.length / 3;
+  const cy = new Float32Array(nf), under = new Uint8Array(nf), below = new Float64Array(count), all = new Float64Array(count);
+  let ylo = Infinity, yhi = -Infinity;
+  for (let v = 0; v < nv; v++) { ylo = Math.min(ylo, pos[v * 3 + 1]); yhi = Math.max(yhi, pos[v * 3 + 1]); }
   for (let f = 0; f < nf; f++) {
     const l = faceLabels[f];
+    cy[f] = (pos[index[f * 3] * 3 + 1] + pos[index[f * 3 + 1] * 3 + 1] + pos[index[f * 3 + 2] * 3 + 1]) / 3;
     all[l] += faceArea[f];
-    if (pos[index[f * 3] * 3 + 1] + pos[index[f * 3 + 1] * 3 + 1] + pos[index[f * 3 + 2] * 3 + 1] < 3 * h) { under[f] = 1; below[l] += faceArea[f]; }
+    if (cy[f] < h) { under[f] = 1; below[l] += faceArea[f]; }
   }
-  const base = (l) => below[l] >= 0.5 * all[l];
+  const base = (l) => below[l] >= 0.8 * all[l];
   const moving = (f) => under[f] && !base(faceLabels[f]);
   // pieces to move, joined through shared vertices
-  const parent = new Int32Array(pos.length / 3).fill(-1);
+  const parent = new Int32Array(nv).fill(-1);
   for (let f = 0; f < nf; f++) {
     if (!moving(f)) continue;
     for (let k = 0; k < 3; k++) { const v = index[f * 3 + k]; if (parent[v] < 0) parent[v] = v; }
@@ -395,38 +408,92 @@ function splitBase(faceLabels, label, count, pos, index, faceArea, total, h) {
       if (ra !== rb) parent[ra] = rb;
     }
   }
-  const pieces = new Map(); // root -> { area, touches: Map(base part -> shared vertices) }
+  const pieceOf = new Int32Array(nf).fill(-1), pieces = [], ids = new Map(); // { area, grown, touches: Map(base part -> shared vertices) }
   for (let f = 0; f < nf; f++) {
     if (!moving(f)) continue;
     const r = find(parent, index[f * 3]);
-    if (!pieces.has(r)) pieces.set(r, { area: 0, touches: new Map() });
-    pieces.get(r).area += faceArea[f];
+    if (!ids.has(r)) { ids.set(r, pieces.length); pieces.push({ area: 0, grown: 0, touches: new Map() }); }
+    pieceOf[f] = ids.get(r);
+    pieces[pieceOf[f]].area += faceArea[f];
   }
-  if (!pieces.size) return count;
+  if (!pieces.length) return count;
   for (let f = 0; f < nf; f++) {
     if (!base(faceLabels[f])) continue;
     for (let k = 0; k < 3; k++) {
       const v = index[f * 3 + k];
       if (parent[v] < 0) continue;
-      const t = pieces.get(find(parent, v)).touches;
+      const t = pieces[ids.get(find(parent, v))].touches;
       t.set(faceLabels[f], (t.get(faceLabels[f]) || 0) + 1);
     }
   }
+  const grownInto = growLegs(pieces, pieceOf, faceLabels, base, cy, pos, index, faceArea, h, h + 0.25 * (yhi - ylo));
   // a few stray triangles of a rim stay where they are; a new part must be worth having
   let fresh = 0;
-  for (const p of pieces.values()) {
+  for (const p of pieces) {
     p.to = p.area < 1e-4 * total ? -1 : p.touches.size ? [...p.touches].sort((x, y) => y[1] - x[1])[0][0] : count;
     if (p.to === count) fresh += p.area;
   }
-  if (fresh < 5e-4 * total) for (const p of pieces.values()) if (p.to === count) p.to = -1;
+  if (fresh < 5e-4 * total) for (const p of pieces) if (p.to === count) p.to = -1;
   for (let f = 0; f < nf; f++) {
-    if (!moving(f)) continue;
-    const to = pieces.get(find(parent, index[f * 3])).to;
-    if (to < 0) continue;
-    faceLabels[f] = to;
-    for (let k = 0; k < 3; k++) label[index[f * 3 + k]] = to;
+    const p = pieceOf[f] >= 0 ? pieceOf[f] : grownInto[f];
+    if (p < 0 || pieces[p].to < 0 || (pieceOf[f] < 0 && pieces[p].grown > pieces[p].area)) continue;
+    faceLabels[f] = pieces[p].to;
+    for (let k = 0; k < 3; k++) label[index[f * 3 + k]] = pieces[p].to;
   }
   return fresh >= 5e-4 * total ? count + 1 : count;
+}
+
+/**
+ * Follow legs up from h to top: the triangles above h are taken lowest first; a steep one that
+ * touches legs grows them, anything else is body. Where a leg meets the body the triangle is body
+ * but the leg grows on beside it (a leg against a curved underside meets it lower on one side),
+ * until a flat underside closes it. Returns the piece each grown triangle joined (-1 for the
+ * rest) and adds up pieces[].grown; a piece that grows more than its own area (a bookcase side,
+ * a bed post) is left as it was.
+ */
+function growLegs(pieces, pieceOf, faceLabels, base, cy, pos, index, faceArea, h, top) {
+  const nf = faceLabels.length, nv = pos.length / 3, P = pieces.length, NB = 1024;
+  const grownInto = new Int32Array(nf).fill(-1);
+  // triangles of the body parts between h and top, by height
+  const bins = new Int32Array(NB + 1), slot = (f) => Math.min(NB - 1, Math.floor((cy[f] - h) / (top - h) * NB));
+  const take = (f) => pieceOf[f] < 0 && cy[f] >= h && cy[f] < top && !base(faceLabels[f]);
+  for (let f = 0; f < nf; f++) if (take(f)) bins[slot(f) + 1]++;
+  for (let b = 0; b < NB; b++) bins[b + 1] += bins[b];
+  const order = new Int32Array(bins[NB]);
+  for (let f = 0; f < nf; f++) if (take(f)) order[bins[slot(f)]++] = f;
+  // one union-find over vertices plus a node per piece; roots are legs (piece nodes) or body
+  const LEG = 1, BODY = 2, up = new Int32Array(nv + P).fill(-1), state = new Uint8Array(nv + P);
+  for (let p = 0; p < P; p++) { up[nv + p] = nv + p; state[nv + p] = LEG; }
+  for (let f = 0; f < nf; f++) if (pieceOf[f] >= 0) for (let k = 0; k < 3; k++) up[index[f * 3 + k]] = nv + pieceOf[f];
+  for (const f of order) {
+    const a = index[f * 3] * 3, b = index[f * 3 + 1] * 3, c = index[f * 3 + 2] * 3;
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
+    const ny = uz * vx - ux * vz, len = Math.hypot(uy * vz - uz * vy, ny, ux * vy - uy * vx);
+    let leg = -1, body = -1;
+    for (let k = 0; k < 3; k++) {
+      const v = index[f * 3 + k];
+      if (up[v] < 0) continue;
+      const r = find(up, v);
+      if (state[r] === LEG) { if (leg < 0) leg = r; } else body = r;
+    }
+    if (leg >= 0 && body >= 0) { // the seam: its new corners belong to neither side yet
+      for (let k = 0; k < 3; k++) if (up[index[f * 3 + k]] === -1) up[index[f * 3 + k]] = -2;
+      continue;
+    }
+    const grows = leg >= 0 && Math.abs(ny) <= 0.7 * len;
+    const root = grows ? leg : body >= 0 ? body : leg >= 0 ? leg : index[f * 3];
+    if (!grows) state[root] = BODY;
+    for (let k = 0; k < 3; k++) {
+      const v = index[f * 3 + k];
+      if (up[v] < 0) { up[v] = root; continue; }
+      const r = find(up, v);
+      if (r !== root) up[r] = root;
+    }
+    if (up[root] < 0) up[root] = root;
+    if (grows) { grownInto[f] = root - nv; pieces[root - nv].grown += faceArea[f]; }
+  }
+  return grownInto;
 }
 
 /**
@@ -437,8 +504,8 @@ function splitBase(faceLabels, label, count, pos, index, faceArea, total, h) {
  *   dilate: rings used to close small gaps in a groove; minArea: smallest part (fraction of surface);
  *   color: material colour per vertex (vertexColors) to also split where the material changes colour
  *   and to make every boundary follow the colour edge (colorSplit: false uses it for boundaries only);
- *   colorDist: how different two materials must be; base: false keeps legs and plinths under the
- *   body's underside in the parts they touch
+ *   colorDist: how different two materials must be; base: false keeps legs, frames and plinths under
+ *   the body's underside, a table top or a seat in the parts they touch
  * @returns {{faceLabels:Int32Array, vertexLabels:Int32Array, parts:Array}}
  */
 export function segment(pos, index, opts = {}) {

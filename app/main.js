@@ -495,6 +495,8 @@ function suggestName(parts) {
   // one low piece under the whole footprint (on the floor or on legs): a base
   if (parts.length === 1 && minY < b.min[1] + 0.2 * H && maxY < b.min[1] + 0.4 * H && sx > 0.7 * S.dims.x && sz > 0.7 * S.dims.z) return '받침대';
   if (minY < b.min[1] + 0.03 * H && area < 8) return '다리';
+  // from the floor up to (or a little past) the underside, table top or seat found when the file opened: legs with their frame
+  if (S.info.underside != null && minY < b.min[1] + 0.03 * H && maxY < S.info.underside + 0.25 * H) return '받침대';
   // a thin slab across the very top: a table top (checked before 몸체, it is often the biggest part)
   if (maxY > b.max[1] - 0.05 * H && hi[1] - lo[1] < 0.25 * Math.max(sx, sz) && Math.max(sx, sz) > 0.6 * Math.max(S.dims.x, S.dims.z)) return '상판';
   if (parts.includes(0)) return '몸체';

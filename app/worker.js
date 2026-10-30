@@ -12,7 +12,7 @@ import {
   faceColors, facesOfParts, groupPrimitive, mainPrimitive, meshWorldMatrix, partStats, plainFloats, prepareOutput,
   releaseSource, reskinGeometry, setVariant, weldedPositions,
 } from '../core/skin.js';
-import { adjacency, segment, uniqueEdges, valleyCurvature, vertexColors, vertexNormals } from '../core/segment.js';
+import { adjacency, segment, undersideHeight, uniqueEdges, valleyCurvature, vertexColors, vertexNormals } from '../core/segment.js';
 import { bboxOf, furnitureAxes } from '../core/size.js';
 import { stripWebPProfile } from './webp.js';
 
@@ -89,7 +89,7 @@ async function open({ bytes, segment: segOpts = {} }, progress) {
     timings: T.done(),
     info: {
       triangles: indexCount / 3, vertices: prim.getAttribute('POSITION').getCount(), weldedVertices: nv,
-      indexCount, textures, bbox: bboxOf(welded.pos),
+      indexCount, textures, bbox: bboxOf(welded.pos), underside: undersideHeight(welded.pos, welded.index),
       materials: doc.getRoot().listMaterials().length, meshes: doc.getRoot().listMeshes().length,
     },
     axes: furnitureAxes(welded.pos),
