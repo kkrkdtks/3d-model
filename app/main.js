@@ -43,7 +43,7 @@ const getBlob = async (path) => {
 const CATEGORIES = ['가죽', '패브릭', '대리석', '나무', '도장', '메탈', '기타'];
 const PHOTO_TABS = { 가죽: 'leather', 패브릭: 'fabric', 대리석: 'marble', 나무: 'wood', 기타: 'other' };
 const NEUTRAL = '#A89F94';
-const SWATCH_TINT = { leather: '#8E5B3A', fabric: '#A39A8C', paint: '#B7B1A8', metal: '#9EA0A3' };
+const SWATCH_TINT = { leather: '#8E5B3A', fabric: '#A39A8C', paint: '#B7B1A8', metal: '#9EA0A3', stone: '#DAD5CD', 'stone-dark': '#1C1C1E', wood: '#B08A60', glass: '#D9E3E1', rattan: '#C8A26E' };
 const GROUP_COLORS = ['#e07a2f', '#3b7dd8', '#2e9e6e', '#c9487a', '#8c6bd6', '#c9a227', '#3fa3a8', '#b35f3b'];
 const SEL_COLOR = '#ff8a3d';
 // the piece below a height cut, shown while choosing the height
@@ -895,11 +895,23 @@ function cutBox() {
   </div>`;
 }
 
+/** The small line under a material card: what repeats and how big, or how the surface looks. */
+function cardMeta(m) {
+  if (m.alpha != null) return m.alpha < 0.4 ? '투명' : '반투명';
+  const r = m.maps?.orm ? m.roughnessMean ?? 0.6 : m.roughness ?? 1;
+  const gloss = r < 0.12 ? '거울 광택' : r < 0.28 ? '광택' : r < 0.55 ? '반광' : '매트';
+  if (m.metallic) return `금속 · ${gloss}`;
+  const word = { 대리석: '무늬', 나무: '결', 패브릭: '짜임', 가죽: '결' }[m.category];
+  if (m.maps && word && m.tileCm) return `${word} ${m.tileCm}cm`;
+  if (m.maps && m.category === '기타' && m.tileCm) return `무늬 ${m.tileCm}cm`;
+  return gloss;
+}
+
 function matCard(m, g) {
   const count = g.choices.filter((c) => c.materialId === m.id).length;
   const first = g.choices.find((c) => c.materialId === m.id && c.color);
-  const hex = m.colorMode === 'photo' ? '' : first?.color.hex || SWATCH_TINT[m.palette] || NEUTRAL;
-  const meta = m.maps ? `결 ${m.tileCm}cm` : m.metallic ? '금속' : (m.roughness ?? 1) < 0.3 ? '광택' : '매트';
+  const hex = m.colorMode === 'photo' ? '' : first?.color.hex || m.swatchHex || SWATCH_TINT[m.palette] || NEUTRAL;
+  const meta = cardMeta(m);
   return `<div class="mat-cell"><button class="mat ${g.pick === m.id ? 'on' : ''}" type="button" data-action="mat-pick" data-id="${esc(m.id)}" title="${esc(m.name)}">
     <img data-swatch="${esc(m.id)}|${hex}" alt="">
     <span class="cap"><b>${esc(m.name)}</b><small>${meta}</small></span>

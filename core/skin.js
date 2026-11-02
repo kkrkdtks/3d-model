@@ -11,7 +11,8 @@ import {
   transformPrimitive, weldPrimitive,
 } from '@gltf-transform/functions';
 import {
-  EXTMeshoptCompression, EXTTextureWebP, KHRMaterialsClearcoat, KHRMaterialsSheen, KHRMeshQuantization,
+  EXTMeshoptCompression, EXTTextureWebP, KHRMaterialsAnisotropy, KHRMaterialsClearcoat, KHRMaterialsSheen,
+  KHRMeshQuantization,
 } from '@gltf-transform/extensions';
 import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import { segment, vertexNormals } from './segment.js';
@@ -407,6 +408,18 @@ export async function createMaterial(doc, def, color, loadImage, cache = new Map
       .setClearcoatFactor(def.clearcoat.factor ?? 1)
       .setClearcoatRoughnessFactor(def.clearcoat.roughness ?? 0.1));
   }
+  if (def.anisotropy) {
+    // brushed (hairline) metal: highlights stretch across the brushing; viewers without the
+    // extension show the same metal without the stretch
+    const ext = doc.createExtension(KHRMaterialsAnisotropy);
+    mat.setExtension('KHR_materials_anisotropy', ext.createAnisotropy()
+      .setAnisotropyStrength(def.anisotropy.strength ?? 0.6)
+      .setAnisotropyRotation(((def.anisotropy.rotation ?? 0) * Math.PI) / 180));
+  }
+  if (def.alpha != null) {
+    // glass: see-through by blending, both sides drawn
+    mat.setBaseColorFactor([...base, def.alpha]).setAlphaMode('BLEND').setDoubleSided(true);
+  }
   mat.setExtras({ material: def.id, color: tint ? color.name || color.hex : null, colorHex: tint ? color.hex : null });
   return { mat, def, color: tint ? color : null };
 }
@@ -465,5 +478,5 @@ export async function encodeVariant(io, doc, opts = {}) {
   return io.writeBinary(copy);
 }
 
-export const EXTENSIONS = [EXTMeshoptCompression, EXTTextureWebP, KHRMaterialsClearcoat, KHRMaterialsSheen, KHRMeshQuantization];
+export const EXTENSIONS = [EXTMeshoptCompression, EXTTextureWebP, KHRMaterialsAnisotropy, KHRMaterialsClearcoat, KHRMaterialsSheen, KHRMeshQuantization];
 export { Document };

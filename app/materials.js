@@ -67,6 +67,16 @@ export async function makeThreeMaterial(def, color, getBlob, anisotropy) {
     m.clearcoat = def.clearcoat.factor ?? 1;
     m.clearcoatRoughness = def.clearcoat.roughness ?? 0.1;
   }
+  if (def.anisotropy) {
+    m.anisotropy = def.anisotropy.strength ?? 0.6;
+    m.anisotropyRotation = ((def.anisotropy.rotation ?? 0) * Math.PI) / 180;
+  }
+  if (def.alpha != null) {
+    m.transparent = true;
+    m.opacity = def.alpha;
+    m.depthWrite = false;
+    m.side = THREE.DoubleSide;
+  }
   return m;
 }
 
@@ -77,12 +87,28 @@ const toSrgb = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4)
 const LUT = new Float32Array(256).map((_, i) => toLin(i / 255));
 const swatchCache = new Map();
 
-async function pixels(blob, sx, sy, sw, sh, size) {
+/**
+ * `size` px square showing `cm` of the surface, starting 10% into the image; the image covers
+ * tileW x tileH cm and repeats when the view is larger than what is left of one tile.
+ */
+async function pixels(blob, cm, tileW, tileH, size) {
   const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
   const c = new OffscreenCanvas(size, size);
   const g = c.getContext('2d');
   g.imageSmoothingQuality = 'high';
-  g.drawImage(bmp, sx * bmp.width, sy * bmp.height, sw * bmp.width, sh * bmp.height, 0, 0, size, size);
+  const fw = cm / tileW, fh = cm / tileH; // view size in tiles
+  if (fw <= 0.9 && fh <= 0.9) {
+    g.drawImage(bmp, 0.1 * bmp.width, 0.1 * bmp.height, fw * bmp.width, fh * bmp.height, 0, 0, size, size);
+  } else {
+    // scale one tile down first (good filtering), then repeat it
+    const t = new OffscreenCanvas(Math.max(1, Math.round(size / fw)), Math.max(1, Math.round(size / fh)));
+    const tg = t.getContext('2d');
+    tg.imageSmoothingQuality = 'high';
+    tg.drawImage(bmp, 0, 0, t.width, t.height);
+    g.fillStyle = g.createPattern(t, 'repeat');
+    g.translate(-0.1 * t.width, -0.1 * t.height);
+    g.fillRect(0, 0, size + t.width, size + t.height);
+  }
   bmp.close();
   return g.getImageData(0, 0, size, size).data;
 }
@@ -101,10 +127,11 @@ export async function swatch(def, color, getBlob, size = 160) {
     const img = g.createImageData(size, size);
     const out = img.data;
     const maps = def.maps || {};
-    const frac = Math.min(1, 7 / (def.tileCm || 25));
+    // about 7 cm of leather or cloth; stone and wood show more (swatchCm) so their pattern reads
+    const cm = def.swatchCm || 7, tw = def.tileCm || 25, th = def.tileHeightCm || tw;
     const [alb, nrm] = await Promise.all([
-      maps.baseColor ? pixels(await getBlob(maps.baseColor), 0.1, 0.1, frac, frac * (def.tileCm || 25) / (def.tileHeightCm || def.tileCm || 25), size) : null,
-      maps.normal ? pixels(await getBlob(maps.normal), 0.1, 0.1, frac, frac * (def.tileCm || 25) / (def.tileHeightCm || def.tileCm || 25), size) : null,
+      maps.baseColor ? pixels(await getBlob(maps.baseColor), cm, tw, th, size) : null,
+      maps.normal ? pixels(await getBlob(maps.normal), cm, tw, th, size) : null,
     ]);
     const L = [-0.55, 0.6, 0.58], lLen = Math.hypot(...L);
     const rough = def.roughness ?? 1, metal = def.metallic ?? 0;
@@ -126,6 +153,7 @@ export async function swatch(def, color, getBlob, size = 160) {
         for (let k = 0; k < 3; k++) {
           const a = alb ? LUT[alb[i + k]] : 1;
           let lin = a * base[k] * shade;
+          if (def.alpha != null) lin = lin * def.alpha + (1 - def.alpha) * (0.82 - 0.25 * (u + 0.5));
           lin += spec * (metal ? base[k] : 1);
           out[i + k] = Math.round(Math.min(1, toSrgb(Math.max(0, lin))) * 255);
         }

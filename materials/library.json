@@ -155,12 +155,633 @@
       "albedoMean": 0.7102
     },
     {
+      "id": "metal",
+      "name": "메탈",
+      "category": "메탈",
+      "palette": "metal",
+      "roughness": 0.38,
+      "metallic": 1
+    },
+    {
+      "id": "paint-supermatte",
+      "name": "초무광 (슈퍼매트)",
+      "category": "도장",
+      "palette": "paint",
+      "builtin": true,
+      "source": "procedural v3",
+      "roughness": 0.9,
+      "metallic": 0
+    },
+    {
       "id": "paint-matte",
       "name": "무광 도장",
       "category": "도장",
       "palette": "paint",
       "roughness": 0.62,
       "metallic": 0
+    },
+    {
+      "id": "leather-semianiline",
+      "name": "세미아닐린 가죽",
+      "category": "가죽",
+      "palette": "leather",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 14,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.8958,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "leather-semianiline/albedo.webp",
+        "normal": "leather-semianiline/normal.webp",
+        "orm": "leather-semianiline/orm.webp"
+      },
+      "roughnessMean": 0.523
+    },
+    {
+      "id": "leather-pu",
+      "name": "인조가죽 (PU)",
+      "category": "가죽",
+      "palette": "leather",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 10,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.9776,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "leather-pu/albedo.webp",
+        "normal": "leather-pu/normal.webp",
+        "orm": "leather-pu/orm.webp"
+      },
+      "roughnessMean": 0.385
+    },
+    {
+      "id": "leather-croc",
+      "name": "크로커 엠보 가죽",
+      "category": "가죽",
+      "palette": "leather",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 32,
+      "roughness": 1,
+      "metallic": 0,
+      "clearcoat": {
+        "factor": 0.3,
+        "roughness": 0.3
+      },
+      "albedoMean": 0.82,
+      "normalScale": 1,
+      "roughnessMean": 0.384,
+      "maps": {
+        "baseColor": "leather-croc/albedo.webp",
+        "normal": "leather-croc/normal.webp",
+        "orm": "leather-croc/orm.webp"
+      }
+    },
+    {
+      "id": "fabric-boucle",
+      "name": "부클레",
+      "category": "패브릭",
+      "palette": "fabric",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 10,
+      "roughness": 1,
+      "metallic": 0,
+      "sheen": {
+        "intensity": 0.35,
+        "roughness": 0.8
+      },
+      "albedoMean": 0.82,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "fabric-boucle/albedo.webp",
+        "normal": "fabric-boucle/normal.webp",
+        "orm": "fabric-boucle/orm.webp"
+      },
+      "roughnessMean": 0.923
+    },
+    {
+      "id": "fabric-velvet",
+      "name": "벨벳",
+      "category": "패브릭",
+      "palette": "fabric",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 30,
+      "roughness": 1,
+      "metallic": 0,
+      "sheen": {
+        "intensity": 1.0,
+        "roughness": 0.35
+      },
+      "albedoMean": 0.8714,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "fabric-velvet/albedo.webp",
+        "normal": "fabric-velvet/normal.webp",
+        "orm": "fabric-velvet/orm.webp"
+      },
+      "roughnessMean": 0.721
+    },
+    {
+      "id": "fabric-chenille",
+      "name": "셔닐",
+      "category": "패브릭",
+      "palette": "fabric",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 8,
+      "roughness": 1,
+      "metallic": 0,
+      "sheen": {
+        "intensity": 0.6,
+        "roughness": 0.45
+      },
+      "albedoMean": 0.82,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "fabric-chenille/albedo.webp",
+        "normal": "fabric-chenille/normal.webp",
+        "orm": "fabric-chenille/orm.webp"
+      },
+      "roughnessMean": 0.862
+    },
+    {
+      "id": "fabric-corduroy",
+      "name": "코듀로이",
+      "category": "패브릭",
+      "palette": "fabric",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 7,
+      "roughness": 1,
+      "metallic": 0,
+      "sheen": {
+        "intensity": 0.7,
+        "roughness": 0.4
+      },
+      "albedoMean": 0.82,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "fabric-corduroy/albedo.webp",
+        "normal": "fabric-corduroy/normal.webp",
+        "orm": "fabric-corduroy/orm.webp"
+      },
+      "roughnessMean": 0.826
+    },
+    {
+      "id": "fabric-cotton",
+      "name": "코튼",
+      "category": "패브릭",
+      "palette": "fabric",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 5,
+      "roughness": 1,
+      "metallic": 0,
+      "sheen": {
+        "intensity": 0.3,
+        "roughness": 0.6
+      },
+      "albedoMean": 0.8363,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "fabric-cotton/albedo.webp",
+        "normal": "fabric-cotton/normal.webp",
+        "orm": "fabric-cotton/orm.webp"
+      },
+      "roughnessMean": 0.86
+    },
+    {
+      "id": "fabric-herringbone",
+      "name": "헤링본",
+      "category": "패브릭",
+      "palette": "fabric",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 7,
+      "roughness": 1,
+      "metallic": 0,
+      "sheen": {
+        "intensity": 0.35,
+        "roughness": 0.6
+      },
+      "albedoMean": 0.82,
+      "normalScale": 1,
+      "roughnessMean": 0.889,
+      "maps": {
+        "baseColor": "fabric-herringbone/albedo.webp",
+        "normal": "fabric-herringbone/normal.webp",
+        "orm": "fabric-herringbone/orm.webp"
+      }
+    },
+    {
+      "id": "fabric-tweed",
+      "name": "트위드",
+      "category": "패브릭",
+      "palette": "fabric",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 8,
+      "roughness": 1,
+      "metallic": 0,
+      "sheen": {
+        "intensity": 0.3,
+        "roughness": 0.7
+      },
+      "albedoMean": 0.82,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "fabric-tweed/albedo.webp",
+        "normal": "fabric-tweed/normal.webp",
+        "orm": "fabric-tweed/orm.webp"
+      },
+      "roughnessMean": 0.93
+    },
+    {
+      "id": "fabric-teddy",
+      "name": "테디 (양털)",
+      "category": "패브릭",
+      "palette": "fabric",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 10,
+      "roughness": 1,
+      "metallic": 0,
+      "sheen": {
+        "intensity": 0.6,
+        "roughness": 0.6
+      },
+      "albedoMean": 0.82,
+      "normalScale": 1,
+      "roughnessMean": 0.885,
+      "maps": {
+        "baseColor": "fabric-teddy/albedo.webp",
+        "normal": "fabric-teddy/normal.webp",
+        "orm": "fabric-teddy/orm.webp"
+      }
+    },
+    {
+      "id": "fabric-microfiber",
+      "name": "기능성 패브릭",
+      "category": "패브릭",
+      "palette": "fabric",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 18,
+      "roughness": 1,
+      "metallic": 0,
+      "sheen": {
+        "intensity": 0.7,
+        "roughness": 0.45
+      },
+      "albedoMean": 0.9191,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "fabric-microfiber/albedo.webp",
+        "normal": "fabric-microfiber/normal.webp",
+        "orm": "fabric-microfiber/orm.webp"
+      },
+      "roughnessMean": 0.82
+    },
+    {
+      "id": "stone-carrara",
+      "name": "카라라 대리석",
+      "category": "대리석",
+      "palette": "stone",
+      "swatchHex": "#E6E3DD",
+      "swatchCm": 60,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 150,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.8946,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "stone-carrara/albedo.webp",
+        "orm": "stone-carrara/orm.webp"
+      },
+      "roughnessMean": 0.079
+    },
+    {
+      "id": "stone-carrara-honed",
+      "name": "카라라 무광 (혼드)",
+      "category": "대리석",
+      "palette": "stone",
+      "swatchHex": "#E6E3DD",
+      "swatchCm": 60,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 150,
+      "roughness": 0.42,
+      "metallic": 0,
+      "maps": {
+        "baseColor": "stone-carrara/albedo.webp"
+      },
+      "albedoMean": 0.8946
+    },
+    {
+      "id": "stone-calacatta",
+      "name": "칼라카타 대리석",
+      "category": "대리석",
+      "palette": "stone",
+      "swatchHex": "#EEECE8",
+      "swatchCm": 70,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 160,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.9243,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "stone-calacatta/albedo.webp",
+        "orm": "stone-calacatta/orm.webp"
+      },
+      "roughnessMean": 0.075
+    },
+    {
+      "id": "stone-nero",
+      "name": "네로 마르퀴나",
+      "category": "대리석",
+      "palette": "stone-dark",
+      "swatchHex": "#1C1C1E",
+      "swatchCm": 50,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 120,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.0154,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "stone-nero/albedo.webp",
+        "orm": "stone-nero/orm.webp"
+      },
+      "roughnessMean": 0.056
+    },
+    {
+      "id": "stone-emperador",
+      "name": "에퍼라도 (브라운)",
+      "category": "대리석",
+      "palette": "stone",
+      "swatchHex": "#5E4535",
+      "swatchCm": 40,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 100,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.1997,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "stone-emperador/albedo.webp",
+        "orm": "stone-emperador/orm.webp"
+      },
+      "roughnessMean": 0.081
+    },
+    {
+      "id": "stone-travertine",
+      "name": "트래버틴",
+      "category": "대리석",
+      "palette": "stone",
+      "swatchHex": "#D6C6AA",
+      "swatchCm": 30,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 60,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.8,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "stone-travertine/albedo.webp",
+        "normal": "stone-travertine/normal.webp",
+        "orm": "stone-travertine/orm.webp"
+      },
+      "roughnessMean": 0.509
+    },
+    {
+      "id": "stone-terrazzo",
+      "name": "테라조",
+      "category": "대리석",
+      "palette": "stone",
+      "swatchHex": "#E4E0D8",
+      "swatchCm": 25,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 50,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.8,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "stone-terrazzo/albedo.webp",
+        "orm": "stone-terrazzo/orm.webp"
+      },
+      "roughnessMean": 0.114
+    },
+    {
+      "id": "stone-ceramic",
+      "name": "세라믹 (무광)",
+      "category": "대리석",
+      "palette": "stone",
+      "swatchHex": "#B9B4AC",
+      "swatchCm": 40,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 120,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.8712,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "stone-ceramic/albedo.webp",
+        "normal": "stone-ceramic/normal.webp",
+        "orm": "stone-ceramic/orm.webp"
+      },
+      "roughnessMean": 0.502
+    },
+    {
+      "id": "wood-oak",
+      "name": "오크",
+      "category": "나무",
+      "palette": "wood",
+      "swatchHex": "#C29A6B",
+      "swatchCm": 30,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 120,
+      "tileHeightCm": 45,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.7373,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "wood-oak/albedo.webp",
+        "normal": "wood-oak/normal.webp",
+        "orm": "wood-oak/orm.webp"
+      },
+      "roughnessMean": 0.546
+    },
+    {
+      "id": "wood-oak-quarter",
+      "name": "오크 (곧은결)",
+      "category": "나무",
+      "palette": "wood",
+      "swatchHex": "#C29A6B",
+      "swatchCm": 30,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 100,
+      "tileHeightCm": 40,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.6013,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "wood-oak-quarter/albedo.webp",
+        "normal": "wood-oak-quarter/normal.webp",
+        "orm": "wood-oak-quarter/orm.webp"
+      },
+      "roughnessMean": 0.493
+    },
+    {
+      "id": "wood-walnut",
+      "name": "월넛",
+      "category": "나무",
+      "palette": "wood",
+      "swatchHex": "#5B3E2B",
+      "swatchCm": 30,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 100,
+      "tileHeightCm": 45,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.7284,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "wood-walnut/albedo.webp",
+        "normal": "wood-walnut/normal.webp",
+        "orm": "wood-walnut/orm.webp"
+      },
+      "roughnessMean": 0.497
+    },
+    {
+      "id": "wood-ash",
+      "name": "애쉬",
+      "category": "나무",
+      "palette": "wood",
+      "swatchHex": "#D2BA94",
+      "swatchCm": 30,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 120,
+      "tileHeightCm": 45,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.7538,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "wood-ash/albedo.webp",
+        "normal": "wood-ash/normal.webp",
+        "orm": "wood-ash/orm.webp"
+      },
+      "roughnessMean": 0.546
+    },
+    {
+      "id": "wood-birch",
+      "name": "자작나무 (합판)",
+      "category": "나무",
+      "palette": "wood",
+      "swatchHex": "#DCC6A2",
+      "swatchCm": 30,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 80,
+      "tileHeightCm": 80,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.8783,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "wood-birch/albedo.webp",
+        "normal": "wood-birch/normal.webp",
+        "orm": "wood-birch/orm.webp"
+      },
+      "roughnessMean": 0.443
+    },
+    {
+      "id": "wood-teak",
+      "name": "티크",
+      "category": "나무",
+      "palette": "wood",
+      "swatchHex": "#A06F42",
+      "swatchCm": 30,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 100,
+      "tileHeightCm": 45,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.807,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "wood-teak/albedo.webp",
+        "normal": "wood-teak/normal.webp",
+        "orm": "wood-teak/orm.webp"
+      },
+      "roughnessMean": 0.448
+    },
+    {
+      "id": "wood-rubber",
+      "name": "고무나무 (집성)",
+      "category": "나무",
+      "palette": "wood",
+      "swatchHex": "#D1B48C",
+      "swatchCm": 30,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 120,
+      "tileHeightCm": 32,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.7117,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "wood-rubber/albedo.webp",
+        "normal": "wood-rubber/normal.webp",
+        "orm": "wood-rubber/orm.webp"
+      },
+      "roughnessMean": 0.412
+    },
+    {
+      "id": "paint-satin",
+      "name": "반광 도장",
+      "category": "도장",
+      "palette": "paint",
+      "builtin": true,
+      "source": "procedural v3",
+      "roughness": 0.34,
+      "metallic": 0,
+      "clearcoat": {
+        "factor": 0.35,
+        "roughness": 0.25
+      }
     },
     {
       "id": "paint-gloss",
@@ -175,12 +796,295 @@
       }
     },
     {
-      "id": "metal",
-      "name": "메탈",
+      "id": "paint-highgloss",
+      "name": "하이그로시",
+      "category": "도장",
+      "palette": "paint",
+      "builtin": true,
+      "source": "procedural v3",
+      "roughness": 0.1,
+      "metallic": 0,
+      "clearcoat": {
+        "factor": 1.0,
+        "roughness": 0.03
+      }
+    },
+    {
+      "id": "paint-powder",
+      "name": "분체도장",
+      "category": "도장",
+      "palette": "paint",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 6,
+      "roughness": 1,
+      "metallic": 0,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "normal": "paint-powder/normal.webp",
+        "orm": "paint-powder/orm.webp"
+      },
+      "roughnessMean": 0.42
+    },
+    {
+      "id": "paint-sand",
+      "name": "샌드 텍스처 도장",
+      "category": "도장",
+      "palette": "paint",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 5,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.9983,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "paint-sand/albedo.webp",
+        "normal": "paint-sand/normal.webp",
+        "orm": "paint-sand/orm.webp"
+      },
+      "roughnessMean": 0.718
+    },
+    {
+      "id": "metal-hairline",
+      "name": "헤어라인",
       "category": "메탈",
       "palette": "metal",
-      "roughness": 0.38,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 5,
+      "roughness": 1,
+      "metallic": 1,
+      "anisotropy": {
+        "strength": 0.7,
+        "rotation": 90
+      },
+      "albedoMean": 0.9459,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "metal-hairline/albedo.webp",
+        "normal": "metal-hairline/normal.webp",
+        "orm": "metal-hairline/orm.webp"
+      },
+      "roughnessMean": 0.25
+    },
+    {
+      "id": "metal-mirror",
+      "name": "미러 (경면)",
+      "category": "메탈",
+      "palette": "metal",
+      "builtin": true,
+      "source": "procedural v3",
+      "roughness": 0.04,
       "metallic": 1
+    },
+    {
+      "id": "metal-blast",
+      "name": "샌드블라스트",
+      "category": "메탈",
+      "palette": "metal",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 3,
+      "roughness": 1,
+      "metallic": 1,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "normal": "metal-blast/normal.webp",
+        "orm": "metal-blast/orm.webp"
+      },
+      "roughnessMean": 0.441
+    },
+    {
+      "id": "metal-hammered",
+      "name": "해머드",
+      "category": "메탈",
+      "palette": "metal",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 16,
+      "roughness": 1,
+      "metallic": 1,
+      "albedoMean": 0.9779,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "metal-hammered/albedo.webp",
+        "normal": "metal-hammered/normal.webp",
+        "orm": "metal-hammered/orm.webp"
+      },
+      "roughnessMean": 0.227
+    },
+    {
+      "id": "metal-antique",
+      "name": "앤틱 메탈",
+      "category": "메탈",
+      "palette": "metal",
+      "swatchHex": "#B08D57",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 30,
+      "roughness": 1,
+      "metallic": 1,
+      "albedoMean": 0.85,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "metal-antique/albedo.webp",
+        "normal": "metal-antique/normal.webp",
+        "orm": "metal-antique/orm.webp"
+      },
+      "roughnessMean": 0.374
+    },
+    {
+      "id": "metal-cast",
+      "name": "주물 (무쇠)",
+      "category": "메탈",
+      "palette": "metal",
+      "swatchHex": "#3A3A3B",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 8,
+      "roughness": 1,
+      "metallic": 1,
+      "albedoMean": 0.9261,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "baseColor": "metal-cast/albedo.webp",
+        "normal": "metal-cast/normal.webp",
+        "orm": "metal-cast/orm.webp"
+      },
+      "roughnessMean": 0.623
+    },
+    {
+      "id": "glass-clear",
+      "name": "투명 유리",
+      "category": "기타",
+      "palette": "glass",
+      "swatchHex": "#D9E3E1",
+      "builtin": true,
+      "source": "procedural v3",
+      "roughness": 0.03,
+      "metallic": 0,
+      "alpha": 0.22
+    },
+    {
+      "id": "glass-frosted",
+      "name": "샌드 유리 (반투명)",
+      "category": "기타",
+      "palette": "glass",
+      "swatchHex": "#E6ECEA",
+      "builtin": true,
+      "source": "procedural v3",
+      "roughness": 0.45,
+      "metallic": 0,
+      "alpha": 0.62
+    },
+    {
+      "id": "rattan-cane",
+      "name": "라탄 짜임",
+      "category": "기타",
+      "palette": "rattan",
+      "swatchHex": "#C8A26E",
+      "swatchCm": 6,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 6,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.5414,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "rattan-cane/albedo.webp",
+        "normal": "rattan-cane/normal.webp",
+        "orm": "rattan-cane/orm.webp"
+      },
+      "roughnessMean": 0.561
+    },
+    {
+      "id": "rattan-wicker",
+      "name": "라탄 바스켓",
+      "category": "기타",
+      "palette": "rattan",
+      "swatchHex": "#B38A55",
+      "swatchCm": 12,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 12,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.6886,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "rattan-wicker/albedo.webp",
+        "normal": "rattan-wicker/normal.webp",
+        "orm": "rattan-wicker/orm.webp"
+      },
+      "roughnessMean": 0.376
+    },
+    {
+      "id": "other-concrete",
+      "name": "콘크리트",
+      "category": "기타",
+      "palette": "stone",
+      "swatchHex": "#A19D97",
+      "swatchCm": 30,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 80,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.797,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "other-concrete/albedo.webp",
+        "normal": "other-concrete/normal.webp",
+        "orm": "other-concrete/orm.webp"
+      },
+      "roughnessMean": 0.701
+    },
+    {
+      "id": "other-pp",
+      "name": "플라스틱 (PP)",
+      "category": "기타",
+      "palette": "paint",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 2,
+      "roughness": 1,
+      "metallic": 0,
+      "normalScale": 1,
+      "occlusion": false,
+      "maps": {
+        "normal": "other-pp/normal.webp",
+        "orm": "other-pp/orm.webp"
+      },
+      "roughnessMean": 0.553
+    },
+    {
+      "id": "other-cork",
+      "name": "코르크",
+      "category": "기타",
+      "palette": "wood",
+      "swatchHex": "#B48A5E",
+      "swatchCm": 10,
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 10,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.75,
+      "normalScale": 1,
+      "maps": {
+        "baseColor": "other-cork/albedo.webp",
+        "normal": "other-cork/normal.webp",
+        "orm": "other-cork/orm.webp"
+      },
+      "roughnessMean": 0.752
     }
   ],
   "palettes": {
@@ -293,6 +1197,36 @@
         "id": "blue",
         "name": "블루",
         "hex": "#24498A"
+      },
+      {
+        "id": "ivory",
+        "name": "아이보리",
+        "hex": "#E8E2D4"
+      },
+      {
+        "id": "grey",
+        "name": "그레이",
+        "hex": "#8E8E8C"
+      },
+      {
+        "id": "charcoal",
+        "name": "차콜",
+        "hex": "#3A3B3C"
+      },
+      {
+        "id": "sage",
+        "name": "세이지",
+        "hex": "#9AA58E"
+      },
+      {
+        "id": "butter",
+        "name": "버터",
+        "hex": "#EBD9A6"
+      },
+      {
+        "id": "terracotta",
+        "name": "테라코타",
+        "hex": "#B5603F"
       }
     ],
     "metal": [
@@ -315,6 +1249,206 @@
         "id": "gunmetal",
         "name": "건메탈",
         "hex": "#55575B"
+      },
+      {
+        "id": "stainless",
+        "name": "스테인리스",
+        "hex": "#C9CACB"
+      },
+      {
+        "id": "white",
+        "name": "화이트 스테인",
+        "hex": "#E4E4E1"
+      },
+      {
+        "id": "black-steel",
+        "name": "블랙 스테인",
+        "hex": "#1D1C1B"
+      },
+      {
+        "id": "gold",
+        "name": "골드",
+        "hex": "#D4AF6A"
+      },
+      {
+        "id": "rose-gold",
+        "name": "로즈골드",
+        "hex": "#C9937F"
+      },
+      {
+        "id": "copper",
+        "name": "코퍼",
+        "hex": "#B8734D"
+      },
+      {
+        "id": "bronze",
+        "name": "브론즈",
+        "hex": "#7A5A3A"
+      }
+    ],
+    "stone": [
+      {
+        "id": "white",
+        "name": "화이트",
+        "hex": "#ECEAE6"
+      },
+      {
+        "id": "cream",
+        "name": "크림",
+        "hex": "#E3DACB"
+      },
+      {
+        "id": "beige",
+        "name": "베이지",
+        "hex": "#D6C6AA"
+      },
+      {
+        "id": "grey",
+        "name": "그레이",
+        "hex": "#9C9A96"
+      },
+      {
+        "id": "dark-grey",
+        "name": "다크 그레이",
+        "hex": "#55534F"
+      },
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#1C1C1E"
+      },
+      {
+        "id": "brown",
+        "name": "브라운",
+        "hex": "#5E4535"
+      },
+      {
+        "id": "green",
+        "name": "그린",
+        "hex": "#3F5145"
+      }
+    ],
+    "stone-dark": [
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#1C1C1E"
+      },
+      {
+        "id": "warm-black",
+        "name": "웜 블랙",
+        "hex": "#221E1C"
+      },
+      {
+        "id": "charcoal",
+        "name": "차콜",
+        "hex": "#262728"
+      },
+      {
+        "id": "dark-green",
+        "name": "다크 그린",
+        "hex": "#1B2620"
+      },
+      {
+        "id": "dark-brown",
+        "name": "다크 브라운",
+        "hex": "#261D18"
+      },
+      {
+        "id": "navy",
+        "name": "네이비",
+        "hex": "#1A1E26"
+      }
+    ],
+    "wood": [
+      {
+        "id": "natural-oak",
+        "name": "내추럴 오크",
+        "hex": "#C29A6B"
+      },
+      {
+        "id": "light-oak",
+        "name": "라이트 오크",
+        "hex": "#D8BF98"
+      },
+      {
+        "id": "white-wash",
+        "name": "화이트 워시",
+        "hex": "#E2D8C6"
+      },
+      {
+        "id": "walnut",
+        "name": "월넛",
+        "hex": "#5B3E2B"
+      },
+      {
+        "id": "smoked",
+        "name": "스모크",
+        "hex": "#6E5442"
+      },
+      {
+        "id": "teak",
+        "name": "티크",
+        "hex": "#A06F42"
+      },
+      {
+        "id": "cherry",
+        "name": "체리",
+        "hex": "#8A4B2E"
+      },
+      {
+        "id": "black-stain",
+        "name": "블랙 스테인",
+        "hex": "#2B2622"
+      }
+    ],
+    "glass": [
+      {
+        "id": "clear",
+        "name": "투명",
+        "hex": "#D9E3E1"
+      },
+      {
+        "id": "bronze",
+        "name": "브론즈",
+        "hex": "#8C6E52"
+      },
+      {
+        "id": "smoke",
+        "name": "스모크",
+        "hex": "#5E6163"
+      },
+      {
+        "id": "green",
+        "name": "그린",
+        "hex": "#9DB5A6"
+      }
+    ],
+    "rattan": [
+      {
+        "id": "natural",
+        "name": "내추럴",
+        "hex": "#C8A26E"
+      },
+      {
+        "id": "honey",
+        "name": "허니",
+        "hex": "#B07F45"
+      },
+      {
+        "id": "brown",
+        "name": "브라운",
+        "hex": "#6E4B2E"
+      },
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#2A2622"
+      },
+      {
+        "id": "white",
+        "name": "화이트",
+        "hex": "#E4DCCB"
       }
     ]
   }

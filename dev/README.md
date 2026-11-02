@@ -40,7 +40,13 @@ node t30.cjs                         # 앱에서 8종: 받침대 그룹 이름, 
 ## app-tests/ — 앱 시험
 
 - v0.5.3에서 통과 (2026-10-30): `t20.cjs plinth.glb sofa.glb` (색으로 나누기, 높이로 나누기, 작업 기록), `t23.cjs sofa.glb` (저장한 나누기 그대로 다시 열기), `t24.cjs green.glb` (코너 소파 다리), `t25.cjs green.glb` (다리에 블랙·화이트 메탈 내보내기), `furniture/t30.cjs`.
+- v0.6 재질 (2026-11-02): `t26.cjs 모델.glb H "재질id:#색,재질id:#색" 이름 --parts=all|top|notop|base [--cut=mm] [--export=N]` — 탭마다 재질 카드, 재질마다 전체·확대 화면, 앞의 N개 내보내기. 확인한 것: `sofa.glb 812` (가죽·패브릭 14종), 식탁 상판 `--parts=top` (대리석·나무·유리), 다리 `--parts=notop` (메탈·도장·라탄 등).
 - 예전 버전 때 만들고 통과, 그 뒤로 다시 돌리지 않음: t9 (식탁 크기), t10 (소파와 삭제, `SOFA=경로`), t11 (어두운 화면·좁은 창), t14–t17 (v0.4 작업 기록, 라이브러리 zip, 제품 사진), t21 (v0.5 화면), t22 (여는 시간).
+
+## 기본 재질 만들기
+
+- 기본 재질의 질감은 `tools/furniture_materials.py`가 계산으로 만들어요 (실제 크기의 무늬 한 장, 요철은 mm 단위). `python3 tools/furniture_materials.py` 전체, `python3 tools/furniture_materials.py fabric-boucle stone-carrara` 일부만 → `materials/`의 WebP와 `library.json`을 고쳐요. `--preview 폴더`는 PNG로만 저장해요.
+- 재질 목록 그림: `python3 dev/textures/catalog.py 목록.png` (재질마다 실제 크기, 예시 색)
 
 ## textures/ — 색 나누기 시험용 모델
 
