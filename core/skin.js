@@ -78,6 +78,78 @@ export function meshWorldMatrix(doc, mesh) {
   return node ? node.getWorldMatrix() : IDENTITY;
 }
 
+/**
+ * Every triangle primitive of the scene with the node that places it, in scene order (the order
+ * three.js GLTFLoader builds them in). A 3DAISTUDIO file has one; a file made with this program
+ * has the kept rest plus one per changed group, and all of them are parts of the furniture.
+ * Each gets faceOffset / faceCount: its triangles in the one face numbering used for parts, and
+ * made: written by this program (extras.group), so already simplified once and not again.
+ */
+export function triangleSources(doc) {
+  const out = [];
+  const visit = (node) => {
+    const mesh = node.getMesh();
+    if (mesh)
+      for (const prim of mesh.listPrimitives())
+        if (prim.getMode() === 4 && prim.getAttribute('POSITION'))
+          out.push({ prim, mesh, node, world: node.getWorldMatrix(), made: typeof prim.getExtras()?.group === 'string' });
+    for (const child of node.listChildren()) visit(child);
+  };
+  const scene = doc.getRoot().getDefaultScene() || doc.getRoot().listScenes()[0];
+  if (scene) for (const node of scene.listChildren()) visit(node);
+  if (!out.length) {
+    const { prim, mesh } = mainPrimitive(doc);
+    out.push({ prim, mesh, node: null, world: meshWorldMatrix(doc, mesh) });
+  }
+  let offset = 0;
+  for (const s of out) {
+    s.faceCount = (s.prim.getIndices() ? s.prim.getIndices().getCount() : s.prim.getAttribute('POSITION').getCount()) / 3;
+    s.faceOffset = offset;
+    offset += s.faceCount;
+  }
+  return out;
+}
+
+/**
+ * Welded positions of all sources together in scene ("world") units, triangles in source order.
+ * Each source is welded on its own, so separate primitives stay separate pieces.
+ */
+export function weldedSources(doc, sources) {
+  const parts = sources.map((s) => {
+    const w = weldedPositions(doc, s.prim);
+    applyMatrix(w.pos, s.world);
+    return w;
+  });
+  if (parts.length === 1) return parts[0];
+  const pos = new Float32Array(parts.reduce((a, w) => a + w.pos.length, 0));
+  const index = new Uint32Array(parts.reduce((a, w) => a + w.index.length, 0));
+  let v = 0, i = 0;
+  for (const w of parts) {
+    pos.set(w.pos, v * 3);
+    for (let k = 0; k < w.index.length; k++) index[i + k] = w.index[k] + v;
+    v += w.pos.length / 3;
+    i += w.index.length;
+  }
+  return { pos, index };
+}
+
+/** True when every one of these (sorted) faces comes from a piece this program already simplified. */
+export function madeFaces(sources, faces) {
+  return faces.length > 0 && facesBySource(sources, faces).every(([s]) => s.made);
+}
+
+/** Faces (sorted, global numbering) split by source: [[source, local face list], ...]. */
+function facesBySource(sources, faces) {
+  const out = [];
+  let k = 0;
+  for (const s of sources) {
+    const end = s.faceOffset + s.faceCount, local = [];
+    while (k < faces.length && faces[k] < end) local.push(faces[k++] - s.faceOffset);
+    if (local.length) out.push([s, local]);
+  }
+  return out;
+}
+
 export function applyMatrix(pos, m) {
   for (let i = 0; i < pos.length; i += 3) {
     const x = pos[i], y = pos[i + 1], z = pos[i + 2];
@@ -93,12 +165,11 @@ export function applyMatrix(pos, m) {
  * original triangle order; axes says which horizontal axis is the width and which the depth.
  */
 export function analyze(doc, segOpts = {}) {
-  const { prim, mesh } = mainPrimitive(doc);
-  const world = meshWorldMatrix(doc, mesh);
-  const welded = weldedPositions(doc, prim);
-  applyMatrix(welded.pos, world);
+  const sources = triangleSources(doc);
+  const welded = weldedSources(doc, sources);
   const seg = segment(welded.pos, welded.index, { ...DEFAULTS.segment, ...segOpts });
-  return { prim, mesh, world, welded, axes: furnitureAxes(welded.pos), bbox: bboxOf(welded.pos), ...seg };
+  const { prim, mesh, world } = sources[0];
+  return { sources, prim, mesh, world, welded, axes: furnitureAxes(welded.pos), bbox: bboxOf(welded.pos), ...seg };
 }
 
 /**
@@ -228,71 +299,105 @@ export function facesOfParts(faceLabels, parts) {
  */
 export function prepareOutput(doc, analysis, xf, groups, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
-  const { prim, mesh, faceLabels } = analysis;
+  const { faceLabels } = analysis;
+  const sources = analysis.sources || [{ prim: analysis.prim, mesh: analysis.mesh, world: analysis.world, faceOffset: 0, faceCount: faceLabels.length }];
   const buffer = doc.getRoot().listBuffers()[0];
   const out = xfMatrix(xf);
-  const A = mulMat4(out, analysis.world);
-  const origIndex = indexArray(prim);
-  const covered = new Set(groups.flatMap((g) => g.parts));
-  const restParts = [...new Set(faceLabels)].filter((p) => !covered.has(p));
-  let rest = null;
-  if (restParts.length) {
-    rest = prim.clone().setIndices(doc.createAccessor().setType('SCALAR').setArray(trianglesOf(origIndex, selectFaces(faceLabels, restParts))).setBuffer(buffer));
-    compactPrimitive(rest);
-    transformPrimitive(rest, A);
-    simplifyKept(rest, o);
-    rest.setExtras({ group: 'rest' });
+  for (const s of sources) {
+    s.A = mulMat4(out, s.world);
+    s.index = indexArray(s.prim);
+    s.material = s.prim.getMaterial();
   }
-  // other meshes (rare in 3DAISTUDIO files) and all node transforms -> plain metres at the scene root
+  // every output primitive goes into the first source's mesh; the sources themselves are only
+  // read from now on, so they leave their meshes (nothing of them is written as it was)
+  const mesh = sources[0].mesh;
+  for (const s of sources) s.mesh.removePrimitive(s.prim);
+  const covered = new Set(groups.flatMap((g) => g.parts));
+  const restFaces = [];
+  for (let f = 0; f < faceLabels.length; f++) if (!covered.has(faceLabels[f])) restFaces.push(f);
+  const rest = [];
+  for (const [s, faces] of facesBySource(sources, restFaces)) {
+    const p = s.prim.clone().setIndices(doc.createAccessor().setType('SCALAR').setArray(trianglesOf(s.index, faces)).setBuffer(buffer));
+    compactPrimitive(p);
+    transformPrimitive(p, s.A);
+    if (!s.made) simplifyKept(p, o);
+    p.setExtras({ group: 'rest' });
+    rest.push(p);
+  }
+  // whatever else is in the file (lines, points: rare) and all node transforms -> plain metres at the scene root
   const scene = doc.getRoot().getDefaultScene() || doc.getRoot().listScenes()[0];
   const nodes = doc.getRoot().listNodes().filter((n) => n.getMesh());
   for (const node of nodes)
-    if (node.getMesh() !== mesh) transformMesh(node.getMesh(), mulMat4(out, node.getWorldMatrix()));
+    if (node.getMesh().listPrimitives().length) transformMesh(node.getMesh(), mulMat4(out, node.getWorldMatrix()));
   for (const node of nodes) {
     node.setTranslation([0, 0, 0]).setRotation([0, 0, 0, 1]).setScale([1, 1, 1]);
     if (scene && node.getParentNode()) scene.addChild(node);
   }
-  mesh.removePrimitive(prim);
-  return { doc, analysis, xf, A, origIndex, mesh, rest, buffer, opts: o };
+  // meshes left empty (their primitives were sources) are not valid glTF: drop them
+  for (const node of nodes) {
+    const m = node.getMesh();
+    if (m !== mesh && !m.listPrimitives().length) {
+      node.setMesh(null);
+      if (!m.listParents().some((q) => q !== doc.getRoot())) m.dispose();
+    }
+  }
+  return { doc, analysis, sources, xf, mesh, rest, buffer, opts: o, shown: [] };
 }
 
 /**
  * Geometry of one group for one variant option.
  * reskin: new welded geometry with metre UVs for a tiling material; otherwise the original
- * triangles with their own texture. size: { w, d } mm resizes the part (ends keep their shape).
- * Returns { prim, uvMeters? }.
+ * triangles with their own texture (one primitive per source primitive they come from).
+ * size: { w, d } mm resizes the part (ends keep their shape).
+ * Returns { prim, prims, uvMeters? | sources? } (prim = prims[0]).
  */
 export function groupPrimitive(ctx, group, { reskin, size = null }) {
-  const { doc, analysis, xf, A, origIndex, buffer, opts } = ctx;
+  const { doc, analysis, xf, buffer, opts } = ctx;
   const faces = selectFaces(analysis.faceLabels, group.parts);
   if (!faces.length) return null;
   const extras = { group: group.name, size: size ? { w: size.w ?? null, d: size.d ?? null } : null };
   if (reskin) {
-    const geo = reskinGeometry(analysis.welded, faces, { ...opts, xf, size, axes: analysis.axes });
+    const simplify = madeFaces(ctx.sources, faces) ? 1 : opts.simplify;
+    const geo = reskinGeometry(analysis.welded, faces, { ...opts, simplify, xf, size, axes: analysis.axes });
     const p = doc.createPrimitive()
       .setAttribute('POSITION', doc.createAccessor().setType('VEC3').setArray(geo.position).setBuffer(buffer))
       .setAttribute('NORMAL', doc.createAccessor().setType('VEC3').setArray(geo.normal).setBuffer(buffer))
       .setAttribute('TEXCOORD_0', doc.createAccessor().setType('VEC2').setArray(geo.uv.slice()).setBuffer(buffer))
       .setIndices(doc.createAccessor().setType('SCALAR').setArray(geo.index).setBuffer(buffer))
       .setExtras(extras);
-    return { prim: p, uvMeters: geo.uv };
+    return { prim: p, prims: [p], uvMeters: geo.uv };
   }
-  const p = analysis.prim.clone().setIndices(doc.createAccessor().setType('SCALAR').setArray(trianglesOf(origIndex, faces)).setBuffer(buffer));
-  compactPrimitive(p);
-  transformPrimitive(p, A);
+  // the parts' own triangles and texture: one primitive per source they come from
+  const prims = [], from = [];
+  for (const [s, local] of facesBySource(ctx.sources, faces)) {
+    const p = s.prim.clone().setIndices(doc.createAccessor().setType('SCALAR').setArray(trianglesOf(s.index, local)).setBuffer(buffer));
+    compactPrimitive(p);
+    transformPrimitive(p, s.A);
+    prims.push(p);
+    from.push(s);
+  }
   if (size) {
-    const pos = p.getAttribute('POSITION'), nrm = p.getAttribute('NORMAL');
-    const st = stretchFor(bboxOf(pos.getArray()), analysis.axes, size);
-    if (st) {
-      const P = pos.getArray().slice(), N = nrm ? Float32Array.from(nrm.getArray()) : null;
-      stretchGeometry(P, N, st);
-      pos.setArray(P);
-      if (N) nrm.setArray(N).setNormalized(false);
+    // one stretch for the whole group, measured over all its pieces
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const p of prims) {
+      const b = bboxOf(p.getAttribute('POSITION').getArray());
+      for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], b.min[k]); hi[k] = Math.max(hi[k], b.max[k]); }
     }
+    const st = stretchFor({ min: lo, max: hi }, analysis.axes, size);
+    if (st)
+      for (const p of prims) {
+        const pos = p.getAttribute('POSITION'), nrm = p.getAttribute('NORMAL');
+        const P = pos.getArray().slice(), N = nrm ? Float32Array.from(nrm.getArray()) : null;
+        stretchGeometry(P, N, st);
+        pos.setArray(P);
+        if (N) nrm.setArray(N).setNormalized(false);
+      }
   }
-  simplifyKept(p, opts);
-  p.setExtras(extras);
-  return { prim: p };
+  prims.forEach((p, i) => {
+    if (!from[i].made) simplifyKept(p, opts);
+    p.setExtras(extras);
+  });
+  return { prim: prims[0], prims, sources: from };
 }
 
 /** Simplify a part that keeps its original texture (its UV seams stay locked), keeping its exact extent. */
@@ -305,20 +410,22 @@ function simplifyKept(p, o) {
 
 /** Show exactly these primitives (rest + one option per group) in the output mesh. */
 export function setVariant(ctx, built) {
-  for (const p of ctx.mesh.listPrimitives()) ctx.mesh.removePrimitive(p);
-  if (ctx.rest) ctx.mesh.addPrimitive(ctx.rest);
-  for (const b of built) if (b) ctx.mesh.addPrimitive(b.prim);
+  for (const p of ctx.shown) ctx.mesh.removePrimitive(p);
+  ctx.shown = [...ctx.rest, ...built.flatMap((b) => (b ? b.prims || [b.prim] : []))];
+  for (const p of ctx.shown) ctx.mesh.addPrimitive(p);
 }
 
 /**
- * Every option is built: drop the full-resolution source primitive so each variant file is
- * cloned and written without carrying it along.
+ * Every option is built: drop the full-resolution source primitives so each variant file is
+ * cloned and written without carrying them along.
  */
 export function releaseSource(ctx) {
-  const prim = ctx.analysis.prim;
-  const accessors = [...prim.listAttributes(), prim.getIndices()].filter(Boolean);
-  prim.dispose();
-  for (const a of accessors) if (a.listParents().length <= 1) a.dispose();
+  for (const { prim } of ctx.sources) {
+    if (prim.isDisposed()) continue;
+    const accessors = [...prim.listAttributes(), prim.getIndices()].filter(Boolean);
+    prim.dispose();
+    for (const a of accessors) if (!a.isDisposed() && a.listParents().length <= 1) a.dispose();
+  }
 }
 
 /** Older files from this program are quantized; work on plain floats. */
@@ -446,10 +553,14 @@ export function applyToGroup(doc, group, mat, def, opts = {}) {
   group.prim.setMaterial(mat);
 }
 
-/** Shrink the textures that stay from the original model (kept parts). */
+/**
+ * Shrink the textures that stay from the original model (kept parts). encodeTexture may return
+ * null to keep a texture as it is (already small and in the right format).
+ */
 export async function compressKeptTextures(doc, encodeTexture, maxSize = DEFAULTS.keptTextureSize) {
   for (const t of doc.getRoot().listTextures()) {
     const out = await encodeTexture(t.getImage(), t.getMimeType(), maxSize);
+    if (!out && t.getMimeType() === 'image/webp') doc.createExtension(EXTTextureWebP).setRequired(true);
     if (out) {
       t.setImage(out.bytes).setMimeType(out.mimeType);
       if (out.mimeType === 'image/webp') doc.createExtension(EXTTextureWebP).setRequired(true);

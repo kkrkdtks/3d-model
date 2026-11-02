@@ -339,7 +339,7 @@ async function openFile(file) {
     const seg = { parts: res.parts, faceLabels: res.faceLabels };
     busy('화면 준비 중', 0.9);
     const tView = performance.now();
-    await viewer.loadModel(buf, res.info.indexCount);
+    await viewer.loadModel(buf, res.info.sources);
     console.info('열기 시간(ms)', JSON.stringify(res.timings), '화면', Math.round(performance.now() - tView));
     for (const g of S.groups) viewer.setSkin(g.key, null);
     Object.assign(S, {
@@ -801,14 +801,22 @@ async function groupOriginal(g) {
   return g.orig.info;
 }
 
-/** How the screen recolours the original texture into hex (same formula as the export). */
+/**
+ * How the screen recolours the parts' own texture into hex (same formula as the export): one
+ * recipe per piece of the file the parts come from (a single one for a 3DAISTUDIO file).
+ */
 function recolorFor(hex, orig) {
   if (!hex) return null;
   const h = hex.replace('#', '');
   const lin = [0, 2, 4].map((i) => { const c = parseInt(h.slice(i, i + 2), 16) / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
-  if (!orig) return { flat: lin };
-  const f = lin.map((c) => c / Math.max(orig.lum, 1e-4));
-  return viewer.lookIsGlow() ? { emissive: f } : { map: f };
+  const n = S.info?.sources?.length || 1;
+  if (!orig) return n === 1 ? { flat: lin } : Array(n).fill({ flat: lin });
+  const rec = Array(n).fill(null);
+  for (const o of orig.sources) {
+    const f = lin.map((c) => c / Math.max(o.lum, 1e-4));
+    rec[o.source] = !o.tex ? { flat: lin } : o.glow ? { emissive: f } : { map: f };
+  }
+  return n === 1 ? rec[0] : rec;
 }
 
 function addChoice(g, materialId, color) {

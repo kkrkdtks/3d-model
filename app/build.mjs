@@ -42,6 +42,8 @@ html = html
 
 const out = path.join(ROOT, 'dist', 'skin-studio.html');
 await fs.mkdir(path.dirname(out), { recursive: true });
-await fs.writeFile(out, html);
+// written beside it and renamed, so a test or a copy never reads a half-written file
+await fs.writeFile(`${out}.tmp`, html);
+await fs.rename(`${out}.tmp`, out);
 const kb = (s) => `${(Buffer.byteLength(s) / 1024).toFixed(0)}KB`;
 console.log(`dist/skin-studio.html ${kb(html)} (main ${kb(main)}, worker ${kb(worker)}, textures ${Object.keys(files).length}) v${version}`);

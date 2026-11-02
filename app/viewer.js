@@ -55,6 +55,61 @@ export function recolorMaterial(base, rec) {
   return m;
 }
 
+/**
+ * Several meshes as one geometry in scene units (their node transforms applied), triangles in the
+ * given order: { geometry, materials (one per mesh), faceSource (which mesh each triangle is from) }.
+ */
+function mergeMeshes(meshes) {
+  let nv = 0, ni = 0;
+  for (const m of meshes) {
+    const g = m.geometry;
+    if (!g.attributes.normal) g.computeVertexNormals();
+    nv += g.attributes.position.count;
+    ni += g.index ? g.index.count : g.attributes.position.count;
+  }
+  const has = (name) => meshes.some((m) => m.geometry.attributes[name]);
+  const P = new Float32Array(nv * 3), N = new Float32Array(nv * 3);
+  const U = has('uv') ? new Float32Array(nv * 2) : null, U1 = has('uv1') ? new Float32Array(nv * 2) : null;
+  const C = has('color') ? new Float32Array(nv * 4).fill(1) : null;
+  const index = new Uint32Array(ni), faceSource = new Uint16Array(ni / 3);
+  const v = new THREE.Vector3(), nm = new THREE.Matrix3();
+  let vo = 0, io = 0;
+  meshes.forEach((m, s) => {
+    const g = m.geometry, a = g.attributes, n = a.position.count, M = m.matrixWorld;
+    nm.getNormalMatrix(M);
+    for (let i = 0; i < n; i++) {
+      const o = vo + i;
+      v.fromBufferAttribute(a.position, i).applyMatrix4(M);
+      P[o * 3] = v.x; P[o * 3 + 1] = v.y; P[o * 3 + 2] = v.z;
+      v.fromBufferAttribute(a.normal, i).applyMatrix3(nm).normalize();
+      N[o * 3] = v.x; N[o * 3 + 1] = v.y; N[o * 3 + 2] = v.z;
+      if (U && a.uv) { U[o * 2] = a.uv.getX(i); U[o * 2 + 1] = a.uv.getY(i); }
+      if (U1 && a.uv1) { U1[o * 2] = a.uv1.getX(i); U1[o * 2 + 1] = a.uv1.getY(i); }
+      if (C && a.color) {
+        C[o * 4] = a.color.getX(i); C[o * 4 + 1] = a.color.getY(i); C[o * 4 + 2] = a.color.getZ(i);
+        C[o * 4 + 3] = a.color.itemSize === 4 ? a.color.getW(i) : 1;
+      }
+    }
+    // a mirroring node turns the triangles inside out unless their corners swap
+    const flip = M.determinant() < 0, src = g.index ? g.index.array : null, count = g.index ? g.index.count : n;
+    for (let i = 0; i < count; i += 3) {
+      const i0 = src ? src[i] : i, i1 = src ? src[i + 1] : i + 1, i2 = src ? src[i + 2] : i + 2;
+      index[io + i] = vo + i0; index[io + i + 1] = vo + (flip ? i2 : i1); index[io + i + 2] = vo + (flip ? i1 : i2);
+    }
+    faceSource.fill(s, io / 3, (io + count) / 3);
+    vo += n; io += count;
+  });
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(P, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+  if (U) geometry.setAttribute('uv', new THREE.BufferAttribute(U, 2));
+  if (U1) geometry.setAttribute('uv1', new THREE.BufferAttribute(U1, 2));
+  if (C) geometry.setAttribute('color', new THREE.BufferAttribute(C, 4));
+  geometry.setIndex(new THREE.BufferAttribute(index, 1));
+  geometry.computeBoundingSphere();
+  return { geometry, materials: meshes.map((m) => [m.material].flat()[0]), faceSource };
+}
+
 /** Triangle index reordered so each part's triangles are contiguous; returns index + draw groups. */
 function sortByPart(index, faceLabels, partCount) {
   const count = new Uint32Array(partCount + 1);
@@ -194,13 +249,19 @@ export class Viewer {
     this.baseBoxKey = '';
     this.clearDimensions();
     this.model = this.base = this.overlay = null;
+    this.sourceMaterials = this.faceSource = null;
     this.partCount = 0;
     this.shadow.visible = false;
     this.dirty = true;
   }
 
-  /** Show the original GLB. mainIndexCount picks the mesh the parts belong to. */
-  async loadModel(buffer, mainIndexCount) {
+  /**
+   * Show the GLB. sources: { indexCount, vertexCount } of every triangle primitive in the order
+   * the worker numbers faces (one for a 3DAISTUDIO file; a file made with this program has the
+   * kept rest and each changed group). Several are shown as one mesh with those faces in that
+   * order, each piece keeping its own material, so every piece can be picked as parts.
+   */
+  async loadModel(buffer, sources) {
     this.clear();
     const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
     const gltf = await loader.parseAsync(buffer, '');
@@ -209,8 +270,27 @@ export class Viewer {
     this.model.traverse((o) => { if (o.isMesh) meshes.push(o); });
     if (!meshes.length) throw new Error('이 파일에는 보여줄 메시가 없어요.');
     const count = (o) => (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count);
-    this.base = meshes.find((o) => count(o) === mainIndexCount) || meshes.sort((a, b) => count(b) - count(a))[0];
-    this.baseMaterial = this.base.material;
+    // the same pieces in the same order (GLTFLoader keeps the file's order)
+    const used = new Set();
+    const picked = sources.map((s) => {
+      const m = meshes.find((o) => !used.has(o) && count(o) === s.indexCount && o.geometry.attributes.position.count === s.vertexCount);
+      if (m) used.add(m);
+      return m;
+    });
+    if (picked.some((m) => !m)) throw new Error('파일의 모양을 화면에 맞추지 못했어요.');
+    if (picked.length === 1) {
+      this.base = picked[0];
+      this.faceSource = null;
+    } else {
+      this.model.updateMatrixWorld(true);
+      const merged = mergeMeshes(picked);
+      for (const m of picked) { m.removeFromParent(); m.geometry.dispose(); }
+      this.base = new THREE.Mesh(merged.geometry, merged.materials[0]);
+      this.model.add(this.base);
+      this.faceSource = merged.faceSource;
+    }
+    this.sourceMaterials = picked.map((m) => [m.material].flat()[0]);
+    this.baseMaterial = this.sourceMaterials[0];
     // triangle order as loaded: every re-split sorts from this, never from an already sorted index
     const g = this.base.geometry;
     this.baseIndex = g.index ? g.index.array.slice() : Uint32Array.from({ length: g.attributes.position.count }, (_, i) => i);
@@ -290,15 +370,21 @@ export class Viewer {
 
   /** Part data from the worker: welded positions + triangles and a part id per original triangle. */
   setParts(weldedPos, weldedIndex, faceLabels, partCount) {
-    const base = this.base;
+    const base = this.base, S = this.sourceMaterials.length;
     this.partCount = partCount;
-    // original mesh: triangles grouped by part so parts can be hidden or shown in clay
+    // original mesh: triangles grouped by part (and by piece of the file, for its material) so
+    // parts can be hidden or shown in clay; draw group part * S + piece
     const g = base.geometry;
-    const sortedBase = sortByPart(this.baseIndex, faceLabels, partCount);
+    let keys = faceLabels;
+    if (S > 1) {
+      keys = new Int32Array(faceLabels.length);
+      for (let f = 0; f < keys.length; f++) keys[f] = faceLabels[f] * S + this.faceSource[f];
+    }
+    const sortedBase = sortByPart(this.baseIndex, keys, partCount * S);
     g.setIndex(new THREE.BufferAttribute(sortedBase.index, 1));
     g.clearGroups();
-    for (const gr of sortedBase.groups) g.addGroup(gr.start, gr.count, gr.materialIndex);
-    this.baseMaterials = Array.from({ length: partCount }, () => this.baseMaterial);
+    for (const gr of sortedBase.groups) if (S === 1 || gr.count) g.addGroup(gr.start, gr.count, gr.materialIndex);
+    this.baseMaterials = Array.from({ length: partCount * S }, (_, i) => this.sourceMaterials[i % S]);
     base.material = this.baseMaterials;
 
     // overlay + picking share one welded geometry
@@ -360,8 +446,10 @@ export class Viewer {
    */
   setPartStyles(styles) {
     if (!this.base || !this.overlayMaterials) return;
+    const S = this.sourceMaterials.length;
     styles.forEach((s, i) => {
-      this.baseMaterials[i] = s.base === 'hidden' ? this.hiddenMaterial : s.base === 'clay' ? this.clayMaterial : this.baseMaterial;
+      for (let k = 0; k < S; k++)
+        this.baseMaterials[i * S + k] = s.base === 'hidden' ? this.hiddenMaterial : s.base === 'clay' ? this.clayMaterial : this.sourceMaterials[k];
       const m = this.overlayMaterials[i];
       m.visible = !!s.overlay;
       if (s.overlay) { m.color.set(s.overlay.color); m.opacity = s.overlay.opacity; }
@@ -423,7 +511,7 @@ export class Viewer {
     if (!old) return;
     this.out.remove(old);
     old.geometry.dispose();
-    if (old.userData.ownMaterial) old.material.dispose();
+    if (old.userData.ownMaterial) for (const m of [old.material].flat()) m.dispose();
     if (old.userData.pick) { this.pickScene.remove(old.userData.pick); old.userData.pick.material.dispose(); }
     this.skins.delete(key);
     this.updateDimensions();
@@ -479,22 +567,31 @@ export class Viewer {
     const old = this.skins.get(key);
     if (old && old.userData.sig === sig) return old;
     this.removeSkin(key);
+    const S = this.sourceMaterials.length;
     const g = this.base.geometry, idx = g.index.array;
-    const ranges = g.groups.filter((gr) => parts.includes(gr.materialIndex));
+    // the parts' draw groups, piece by piece of the file (each piece has its own material)
+    const ranges = g.groups.filter((gr) => parts.includes(Math.floor(gr.materialIndex / S)))
+      .sort((a, b) => (a.materialIndex % S) - (b.materialIndex % S) || a.start - b.start);
     const count = ranges.reduce((a, r) => a + r.count, 0);
     const remap = new Int32Array(g.attributes.position.count).fill(-1);
-    const index = new Uint32Array(count);
+    const index = new Uint32Array(count), pieces = [];
     let n = 0, o = 0;
-    for (const r of ranges)
+    for (const r of ranges) {
+      const k = r.materialIndex % S;
+      if (pieces.at(-1)?.materialIndex !== k) pieces.push({ start: o, count: 0, materialIndex: k });
+      pieces.at(-1).count += r.count;
       for (let i = r.start; i < r.start + r.count; i++) {
         const v = idx[i];
         if (remap[v] < 0) remap[v] = n++;
         index[o++] = remap[v];
       }
+    }
     this.model.updateMatrixWorld(true);
     const m = this.base.matrixWorld, nm = new THREE.Matrix3().getNormalMatrix(m);
     const P = new Float32Array(n * 3), N = new Float32Array(n * 3);
     const src = g.attributes, uvSrc = src.uv, U = uvSrc ? new Float32Array(n * 2) : null;
+    const uv1Src = src.uv1, U1 = uv1Src ? new Float32Array(n * 2) : null;
+    const colSrc = src.color, C = colSrc ? new Float32Array(n * colSrc.itemSize) : null;
     const v3 = new THREE.Vector3();
     for (let v = 0; v < remap.length; v++) {
       const k = remap[v];
@@ -506,6 +603,8 @@ export class Viewer {
         N[k * 3] = v3.x; N[k * 3 + 1] = v3.y; N[k * 3 + 2] = v3.z;
       }
       if (U) { U[k * 2] = uvSrc.getX(v); U[k * 2 + 1] = uvSrc.getY(v); }
+      if (U1) { U1[k * 2] = uv1Src.getX(v); U1[k * 2 + 1] = uv1Src.getY(v); }
+      if (C) for (let c = 0; c < colSrc.itemSize; c++) C[k * colSrc.itemSize + c] = colSrc.getComponent(v, c);
     }
     stretch(P, src.normal ? N : null);
     const geo = new THREE.BufferGeometry();
@@ -513,8 +612,13 @@ export class Viewer {
     if (src.normal) geo.setAttribute('normal', new THREE.BufferAttribute(N, 3));
     else geo.computeVertexNormals();
     if (U) geo.setAttribute('uv', new THREE.BufferAttribute(U, 2));
+    if (U1) geo.setAttribute('uv1', new THREE.BufferAttribute(U1, 2));
+    if (C) geo.setAttribute('color', new THREE.BufferAttribute(C, colSrc.itemSize));
     geo.setIndex(new THREE.BufferAttribute(index, 1));
-    const mesh = new THREE.Mesh(geo, this.baseMaterial.clone()); // own copy so the hover glow stays on this part
+    // own copies so the hover glow and a new colour stay on this part
+    const mats = this.sourceMaterials.map((x) => x.clone());
+    if (S > 1) for (const p of pieces) geo.addGroup(p.start, p.count, p.materialIndex);
+    const mesh = new THREE.Mesh(geo, S > 1 ? mats : mats[0]);
     mesh.userData.sig = sig;
     mesh.userData.ownMaterial = true;
     this.addSkinMesh(key, mesh, pickPart);
@@ -522,22 +626,21 @@ export class Viewer {
     return mesh;
   }
 
-  /** True for "shaded" exports: no colour texture, the look is in the glow (emissive) texture. */
-  lookIsGlow() {
-    const m = this.baseMaterial;
-    return !!m && !m.map && !!m.emissiveMap && Math.max(m.emissive.r, m.emissive.g, m.emissive.b) > 0;
-  }
-
-  /** Give a shown group the model's own texture in a new colour (rec: see recolorMaterial), or back its own look (null). */
+  /**
+   * Give a shown group its own texture in a new colour, or back its own look (null).
+   * rec: see recolorMaterial; with several pieces in the file, one per piece (null keeps that piece).
+   */
   setRecolor(key, rec) {
     const mesh = this.skins.get(key);
     if (!mesh) return;
     const sig = rec ? JSON.stringify(rec) : '';
     if ((mesh.userData.recolor || '') === sig) return;
+    const list = Array.isArray(rec) ? rec : [rec];
+    const next = this.sourceMaterials.map((base, k) => (list[k] ? recolorMaterial(base, list[k]) : base.clone()));
     const prev = mesh.material;
-    mesh.material = rec ? recolorMaterial(this.baseMaterial, rec) : this.baseMaterial.clone();
+    mesh.material = Array.isArray(prev) ? next : next[0];
     mesh.userData.recolor = sig;
-    prev.dispose();
+    for (const m of [prev].flat()) m.dispose();
     this.dirty = true;
   }
 
@@ -552,12 +655,15 @@ export class Viewer {
   /** Soft glow on a re-skinned group while the mouse is over it. */
   setSkinHighlight(key, on) {
     const mesh = this.skins.get(key);
-    // a glow texture carries the look of "shaded" exports: leave it alone
-    if (!mesh || !mesh.material?.emissive || mesh.material.emissiveMap) return;
+    if (!mesh) return;
     const want = on ? 0.07 : 0;
-    if (mesh.material.emissive.r !== want) {
-      mesh.material.emissive.setRGB(want, want * 0.8, want * 0.6);
-      this.dirty = true;
+    for (const m of [mesh.material].flat()) {
+      // a glow texture carries the look of "shaded" exports: leave it alone
+      if (!m?.emissive || m.emissiveMap) continue;
+      if (m.emissive.r !== want) {
+        m.emissive.setRGB(want, want * 0.8, want * 0.6);
+        this.dirty = true;
+      }
     }
   }
 

@@ -8,9 +8,9 @@ import { ImageUtils, WebIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import {
-  DEFAULTS, applyMatrix, applyToGroup, baseColorSource, compressKeptTextures, createMaterial, cutPart, encodeVariant,
-  faceColors, facesOfParts, groupPrimitive, mainPrimitive, meshWorldMatrix, partStats, plainFloats, prepareOutput,
-  colorLabel, hexToLinear, releaseSource, reskinGeometry, setVariant, srgbToLinear, weldedPositions,
+  DEFAULTS, applyToGroup, baseColorSource, compressKeptTextures, createMaterial, cutPart, encodeVariant,
+  faceColors, facesOfParts, groupPrimitive, partStats, plainFloats, prepareOutput,
+  colorLabel, hexToLinear, releaseSource, reskinGeometry, setVariant, srgbToLinear, triangleSources, weldedSources,
 } from '../core/skin.js';
 import { adjacency, segment, undersideHeight, uniqueEdges, valleyCurvature, vertexColors, vertexNormals } from '../core/segment.js';
 import { bboxOf, furnitureAxes } from '../core/size.js';
@@ -52,20 +52,20 @@ async function open({ bytes, segment: segOpts = {} }, progress) {
   const doc = await io.readBinary(new Uint8Array(bytes));
   T.mark('read');
   await plainFloats(doc);
-  const { prim, mesh } = mainPrimitive(doc);
-  const indexCount = prim.getIndices() ? prim.getIndices().getCount() : prim.getAttribute('POSITION').getCount();
+  // every triangle primitive: one in a 3DAISTUDIO file, several in a file made with this program
+  const sources = triangleSources(doc);
+  const faceCount = sources.reduce((a, s) => a + s.faceCount, 0);
   const textures = doc.getRoot().listTextures().map((t) => {
     const size = t.getSize();
     return { name: t.getName() || t.getURI(), mime: t.getMimeType(), bytes: t.getImage()?.byteLength || 0, width: size?.[0] || 0, height: size?.[1] || 0 };
   });
-  // the colour texture decodes on another thread while the shape is worked out; it needs this
+  // the colour textures decode on another thread while the shape is worked out; it needs this
   // thread for a moment to start and to finish, hence the short breaks below
-  const colorImage = readColorImage(prim).catch((e) => { console.warn('색을 읽지 못했어요', e); return null; });
+  const colorImages = readLooks(sources).catch((e) => { console.warn('색을 읽지 못했어요', e); return null; });
   await pause();
   progress('모양 정리 중', 0.2);
   // scene ("world") units: 3DAISTUDIO lifts the mesh onto the floor with a node offset
-  const welded = weldedPositions(doc, prim);
-  applyMatrix(welded.pos, meshWorldMatrix(doc, mesh));
+  const welded = weldedSources(doc, sources);
   T.mark('weld');
   await pause();
   progress('경계 찾는 중', 0.4);
@@ -77,23 +77,28 @@ async function open({ bytes, segment: segOpts = {} }, progress) {
   const curvature = valleyCurvature(welded.pos, adj, edges, vertexNormals(welded.pos, welded.index, nv), DEFAULTS.segment.smoothIters);
   T.mark('curvature');
   progress('색 살피는 중', 0.65);
-  const image = await colorImage;
+  const looks = (await colorImages) || sources.map(() => ({ pixels: null, factor: [1, 1, 1], glow: false }));
   T.mark('color image');
-  const faceRGB = image && faceColors(prim, image.texCoord, image.pixels, image.size, image.size);
-  // "shaded" exports carry baked light in a glow texture: the lit side shows the part's colour
-  const mat0 = prim.getMaterial();
-  state.glowLook = !!(mat0 && !mat0.getBaseColorTexture() && mat0.getEmissiveTexture());
-  const color = faceRGB && vertexColors(welded.index, faceRGB, nv, adj);
+  const faces = faceLooks(sources, looks, faceCount);
+  const color = faces && vertexColors(welded.index, faces.rgb, nv, adj);
   T.mark('color');
-  Object.assign(state, { bytes: new Uint8Array(bytes), welded, edges, adj, curvature, color, faceRGB, faceArea: null, previews: new Map() });
+  const faceSource = new Uint16Array(faceCount);
+  sources.forEach((s, i) => faceSource.fill(i, s.faceOffset, s.faceOffset + s.faceCount));
+  Object.assign(state, {
+    bytes: new Uint8Array(bytes), welded, edges, adj, curvature, color, faceRGB: faces?.rgb || null, faceTex: faces?.tex || null,
+    faceSource, made: sources.map((s) => s.made), looks: looks.map(({ glow, factor, pixels }) => ({ glow, factor, tex: !!pixels })),
+    faceArea: null, previews: new Map(),
+  });
   progress('부분 나누는 중', 0.75);
   const seg = runSegment(segOpts);
   T.mark('segment');
   return {
     timings: T.done(),
     info: {
-      triangles: indexCount / 3, vertices: prim.getAttribute('POSITION').getCount(), weldedVertices: nv,
-      indexCount, textures, bbox: bboxOf(welded.pos), underside: undersideHeight(welded.pos, welded.index),
+      triangles: faceCount, vertices: sources.reduce((a, s) => a + s.prim.getAttribute('POSITION').getCount(), 0), weldedVertices: nv,
+      // the pieces in face order, so the screen finds the same ones in its copy of the file
+      sources: sources.map((s) => ({ indexCount: s.faceCount * 3, vertexCount: s.prim.getAttribute('POSITION').getCount() })),
+      textures, bbox: bboxOf(welded.pos), underside: undersideHeight(welded.pos, welded.index),
       materials: doc.getRoot().listMaterials().length, meshes: doc.getRoot().listMeshes().length,
     },
     axes: furnitureAxes(welded.pos),
@@ -103,19 +108,32 @@ async function open({ bytes, segment: segOpts = {} }, progress) {
 }
 
 /**
- * The colour texture read at 1024² (fine enough to tell a wooden base from the fabric, coarse
- * enough to ignore the weave): { pixels (RGBA), size, texCoord }, or null without a texture.
+ * What each source looks like: its colour texture read at 1024² (fine enough to tell a wooden
+ * base from the fabric, coarse enough to ignore the weave) as { pixels (RGBA), size, texCoord },
+ * the colour factor it is multiplied by (linear), and glow: the look is in the glow (emissive)
+ * texture of a "shaded" export. A texture used by several sources is read once.
  */
-async function readColorImage(prim) {
-  const src = baseColorSource(prim);
-  if (!src) return null;
+async function readLooks(sources) {
+  const decoded = new Map();
+  return Promise.all(sources.map(async (s) => {
+    const mat = s.prim.getMaterial();
+    const src = baseColorSource(s.prim);
+    const glow = !!(src && mat && !mat.getBaseColorTexture());
+    const factor = !mat ? [1, 1, 1] : glow ? mat.getEmissiveFactor().slice(0, 3) : mat.getBaseColorFactor().slice(0, 3);
+    if (!src) return { pixels: null, factor, glow: false };
+    if (!decoded.has(src.image)) decoded.set(src.image, decodeImage(src.image, src.mime));
+    return { pixels: await decoded.get(src.image), size: 1024, texCoord: src.texCoord, factor, glow };
+  }));
+}
+
+async function decodeImage(bytes, mime) {
   const N = 1024, opts = { colorSpaceConversion: 'none', premultiplyAlpha: 'none' };
   const ctx = new OffscreenCanvas(N, N).getContext('2d', { willReadFrequently: true });
   ctx.imageSmoothingQuality = 'high';
   // ImageDecoder keeps decoding on its own thread while this one is busy, and reads a JPEG
   // straight at the smaller size; createImageBitmap only gets on with it when this thread is free
-  if (self.ImageDecoder && await ImageDecoder.isTypeSupported(src.mime)) {
-    const decoder = new ImageDecoder({ data: src.image, type: src.mime, desiredWidth: N, desiredHeight: N, ...opts });
+  if (self.ImageDecoder && await ImageDecoder.isTypeSupported(mime)) {
+    const decoder = new ImageDecoder({ data: bytes, type: mime, desiredWidth: N, desiredHeight: N, ...opts });
     try {
       const { image } = await decoder.decode();
       ctx.drawImage(image, 0, 0, N, N);
@@ -124,11 +142,30 @@ async function readColorImage(prim) {
       decoder.close();
     }
   } else {
-    const bmp = await createImageBitmap(new Blob([src.image], { type: src.mime }), { ...opts, resizeWidth: N, resizeHeight: N, resizeQuality: 'high' });
+    const bmp = await createImageBitmap(new Blob([bytes], { type: mime }), { ...opts, resizeWidth: N, resizeHeight: N, resizeQuality: 'high' });
     ctx.drawImage(bmp, 0, 0);
     bmp.close();
   }
-  return { pixels: ctx.getImageData(0, 0, N, N).data, size: N, texCoord: src.texCoord };
+  return ctx.getImageData(0, 0, N, N).data;
+}
+
+/**
+ * Colour under every triangle (8-bit sRGB, 3 per face, all sources in face order): tex is the
+ * texture alone (white without one), rgb what the surface shows (texture × colour factor).
+ * null for a single piece without any texture (nothing to tell apart by colour).
+ */
+function faceLooks(sources, looks, faceCount) {
+  if (sources.length === 1 && !looks[0].pixels) return null;
+  const tex = new Uint8Array(faceCount * 3).fill(255), rgb = new Uint8Array(faceCount * 3);
+  sources.forEach((s, i) => {
+    const L = looks[i], o = s.faceOffset * 3, n = s.faceCount * 3;
+    if (L.pixels) tex.set(faceColors(s.prim, L.texCoord, L.pixels, L.size, L.size), o);
+    const f = L.factor;
+    if (f.every((c) => Math.abs(c - 1) < 1e-4)) { rgb.set(tex.subarray(o, o + n), o); return; }
+    for (let k = 0; k < n; k += 3)
+      for (let c = 0; c < 3; c++) rgb[o + k + c] = SRGB8[Math.min(4096, Math.round(LIN[tex[o + k + c]] * f[c] * 4096))];
+  });
+  return { tex, rgb };
 }
 
 /**
@@ -190,7 +227,10 @@ function preview({ parts, simplify, xf, size, axes }) {
   const key = JSON.stringify([[...parts].sort((a, b) => a - b), simplify, xf, size, axes]);
   let geo = state.previews.get(key);
   if (!geo) {
-    geo = reskinGeometry(state.welded, facesOfParts(state.faceLabels, parts), { simplify, xf, size, axes });
+    const faces = facesOfParts(state.faceLabels, parts);
+    // pieces this program wrote were simplified when they were saved: not again (as in the export)
+    const made = faces.length > 0 && faces.every((f) => state.made[state.faceSource[f]]);
+    geo = reskinGeometry(state.welded, faces, { simplify: made ? 1 : simplify, xf, size, axes });
     if (state.previews.size > 24) state.previews.clear();
     state.previews.set(key, geo);
   }
@@ -203,15 +243,17 @@ const toSrgb8 = (c) => Math.round(255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * Ma
 const SRGB8 = Uint8Array.from({ length: 4097 }, (_, i) => toSrgb8(i / 4096));
 
 /**
- * The look of some parts in the original texture, from the colour under each triangle:
- * lum = the typical brightness (linear luminance; area-weighted median, so a dark edge band or a
- * lighter trim does not move the main surface off the chosen colour; with baked light, the lit
- * side: 70th percentile); hex = the average colour of the surface near that brightness.
- * null without a colour texture.
+ * The look of some parts in their own texture, for "original texture, new colour", per source
+ * piece they come from (each has its own texture): lum = the texture's typical brightness
+ * (linear luminance; area-weighted median, so a dark edge band or a lighter trim does not move
+ * the main surface off the chosen colour; with baked light, the lit side: 70th percentile);
+ * hex = the average colour shown near that brightness (texture × colour factor).
+ * Returns { hex, lum (of the biggest piece), sources: [{ source, hex, lum, tex, glow, area }] },
+ * or null without colour information.
  */
 function groupColor({ parts }) {
-  const { faceRGB, faceLabels, welded } = state;
-  if (!faceRGB) return null;
+  const { faceTex, faceRGB, faceLabels, faceSource, welded, looks } = state;
+  if (!faceTex) return null;
   if (!state.faceArea) {
     const { pos, index } = welded, nf = index.length / 3, area = new Float32Array(nf);
     for (let f = 0; f < nf; f++) {
@@ -223,33 +265,41 @@ function groupColor({ parts }) {
     state.faceArea = area;
   }
   const want = new Set(parts), area = state.faceArea;
-  // brightness histogram (square-root steps: fine resolution for dark fabrics too)
-  const BINS = 2048, hist = new Float64Array(BINS);
-  const lumOf = (f) => 0.2126 * LIN[faceRGB[f * 3]] + 0.7152 * LIN[faceRGB[f * 3 + 1]] + 0.0722 * LIN[faceRGB[f * 3 + 2]];
+  // brightness histograms per source (square-root steps: fine resolution for dark fabrics too)
+  const BINS = 2048, per = new Map();
+  const lumOf = (f) => 0.2126 * LIN[faceTex[f * 3]] + 0.7152 * LIN[faceTex[f * 3 + 1]] + 0.0722 * LIN[faceTex[f * 3 + 2]];
   const binOf = (l) => Math.min(BINS - 1, Math.floor(Math.sqrt(l) * BINS));
-  let total = 0;
   for (let f = 0; f < faceLabels.length; f++) {
     if (!want.has(faceLabels[f])) continue;
-    hist[binOf(lumOf(f))] += area[f];
-    total += area[f];
+    const s = faceSource[f];
+    if (!per.has(s)) per.set(s, { hist: new Float64Array(BINS), total: 0 });
+    const e = per.get(s);
+    e.hist[binOf(lumOf(f))] += area[f];
+    e.total += area[f];
   }
-  if (!total) return null;
-  const q = (state.glowLook ? 0.7 : 0.5) * total;
-  let acc = 0, mid = 0;
-  while (mid < BINS - 1 && acc + hist[mid] < q) acc += hist[mid++];
-  const lum = (((mid + (q - acc) / (hist[mid] || 1)) / BINS) ** 2) || 1e-4;
-  // average colour of the faces within about ±25 % of that brightness
-  let r = 0, g = 0, b = 0, w = 0;
-  for (let f = 0; f < faceLabels.length; f++) {
-    if (!want.has(faceLabels[f])) continue;
-    const l = lumOf(f);
-    if (l < lum * 0.75 || l > lum * 1.25) continue;
-    const a = area[f];
-    r += a * LIN[faceRGB[f * 3]]; g += a * LIN[faceRGB[f * 3 + 1]]; b += a * LIN[faceRGB[f * 3 + 2]]; w += a;
+  const out = [];
+  for (const [s, { hist, total }] of per) {
+    if (!total) continue;
+    const q = (looks[s].glow ? 0.7 : 0.5) * total;
+    let acc = 0, mid = 0;
+    while (mid < BINS - 1 && acc + hist[mid] < q) acc += hist[mid++];
+    const lum = (((mid + (q - acc) / (hist[mid] || 1)) / BINS) ** 2) || 1e-4;
+    // average colour shown by the faces within about ±25 % of that brightness
+    let r = 0, g = 0, b = 0, w = 0;
+    for (let f = 0; f < faceLabels.length; f++) {
+      if (faceSource[f] !== s || !want.has(faceLabels[f])) continue;
+      const l = lumOf(f);
+      if (l < lum * 0.75 || l > lum * 1.25) continue;
+      const a = area[f];
+      r += a * LIN[faceRGB[f * 3]]; g += a * LIN[faceRGB[f * 3 + 1]]; b += a * LIN[faceRGB[f * 3 + 2]]; w += a;
+    }
+    if (w) { r /= w; g /= w; b /= w; } else { const fa = looks[s].factor; r = lum * fa[0]; g = lum * fa[1]; b = lum * fa[2]; }
+    const hex = `#${[r, g, b].map((c) => toSrgb8(Math.min(1, c)).toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+    out.push({ source: s, hex, lum, tex: looks[s].tex, glow: looks[s].glow, area: total });
   }
-  if (w) { r /= w; g /= w; b /= w; } else { r = g = b = lum; }
-  const hex = `#${[r, g, b].map((c) => toSrgb8(Math.min(1, c)).toString(16).padStart(2, '0')).join('').toUpperCase()}`;
-  return { hex, lum };
+  if (!out.length) return null;
+  const main = out.reduce((a, e) => (e.area > a.area ? e : a));
+  return { hex: main.hex, lum: main.lum, sources: out };
 }
 
 /**
@@ -286,12 +336,15 @@ async function recolorTexture(bytes, mime, factor, maxSize, { type, quality }) {
 /**
  * Resize to fit maxSize and re-encode in the browser (no extra libraries).
  * WebP normally; JPEG in compatibility mode for viewers without EXT_texture_webp.
+ * keepIfFits: a texture already in that format and size comes back as null (kept as it is):
+ * a file made with this program is not encoded again each time it is opened and saved.
  */
-async function encodeTexture(bytes, mime, maxSize, { quality = 0.85, type = 'image/webp' } = {}) {
+async function encodeTexture(bytes, mime, maxSize, { quality = 0.85, type = 'image/webp', keepIfFits = false } = {}) {
   const blob = new Blob([bytes], { type: mime });
   const size = ImageUtils.getSize(bytes, mime);
   const opts = { colorSpaceConversion: 'none', premultiplyAlpha: 'none' };
   const scale = size ? Math.min(1, maxSize / Math.max(size[0], size[1])) : 1;
+  if (keepIfFits && mime === type && size && scale === 1) return null;
   const bmp = scale < 1
     ? await createImageBitmap(blob, { ...opts, resizeWidth: Math.round(size[0] * scale), resizeHeight: Math.round(size[1] * scale), resizeQuality: 'high' })
     : await createImageBitmap(blob, opts);
@@ -333,13 +386,15 @@ async function exportVariants(args, progress, sendFile) {
   const doc = await io.readBinary(state.bytes);
   await plainFloats(doc);
   T.mark('read');
-  const { prim, mesh } = mainPrimitive(doc);
-  const analysis = { prim, mesh, world: meshWorldMatrix(doc, mesh), welded: state.welded, faceLabels: state.faceLabels, axes: args.axes };
-  // "original texture, new colour" works on the texture that carries the look (colour, or glow
-  // in shaded exports), read before the kept textures are compressed
-  const origMat = prim.getMaterial();
-  const look = baseColorSource(prim);
-  const lookSlot = !origMat ? 'none' : look ? (origMat.getBaseColorTexture() ? 'baseColor' : 'emissive') : 'flat';
+  const sources = triangleSources(doc);
+  if (sources.reduce((a, s) => a + s.faceCount, 0) !== state.faceLabels.length) throw new Error('열어 둔 모델과 내용이 달라요. 파일을 다시 열어 주세요.');
+  const analysis = { sources, welded: state.welded, faceLabels: state.faceLabels, axes: args.axes };
+  // "original texture, new colour" works on the texture that carries each piece's look (colour,
+  // or glow in shaded exports), read before the kept textures are compressed
+  const looks = sources.map((s) => {
+    const mat = s.prim.getMaterial(), look = baseColorSource(s.prim);
+    return { mat, image: look ? { bytes: look.image, mime: look.mime } : null, slot: !mat ? 'none' : look ? (mat.getBaseColorTexture() ? 'baseColor' : 'emissive') : 'flat' };
+  });
   progress('모양 정리 중', 0.06);
   const ctx = prepareOutput(doc, analysis, args.xf, groups, { ...DEFAULTS, ...args.quality });
   T.mark('rest');
@@ -356,11 +411,9 @@ async function exportVariants(args, progress, sendFile) {
   }
   releaseSource(ctx);
   T.mark('geometry');
-  // (compressing gives the texture new bytes; these stay the original ones)
-  const lookImage = look && variants.some((v) => v.some((c) => c.def?.recolor)) ? { bytes: look.image, mime: look.mime } : null;
   progress('원본 텍스처 압축 중', 0.2);
   const texType = args.compat ? 'image/jpeg' : 'image/webp';
-  await compressKeptTextures(doc, (b, m, s) => encodeTexture(b, m, s, { type: texType, quality: args.compat ? 0.9 : 0.85 }), args.keptTextureSize || DEFAULTS.keptTextureSize);
+  await compressKeptTextures(doc, (b, m, s) => encodeTexture(b, m, s, { type: texType, quality: args.compat ? 0.9 : 0.85, keepIfFits: true }), args.keptTextureSize || DEFAULTS.keptTextureSize);
   T.mark('kept textures');
 
   // library textures are WebP; compatibility mode turns them into JPEG once
@@ -375,31 +428,35 @@ async function exportVariants(args, progress, sendFile) {
     }
     return converted.get(path);
   };
-  // the recoloured texture of a group and colour is made once; its material and texture are
-  // added for each variant that uses it and dropped after, so no file carries another's texture
-  const recolored = new Map();
-  const recolor = async (c) => {
-    const key = `${c.group}|${c.color.hex}`;
+  // the recoloured texture of a group, colour and source piece is made once; its material and
+  // texture are added for each variant that uses it and dropped after, so no file carries
+  // another variant's texture
+  const recolored = new Map(), stats = new Map();
+  const recolor = async (c, si) => {
+    const L = looks[si];
+    if (!L.mat) return null;
+    const key = `${c.group}|${c.color.hex}|${si}`;
     if (!recolored.has(key)) {
-      const stats = lookImage && (lookSlot === 'baseColor' || lookSlot === 'emissive') ? groupColor({ parts: groups.find((g) => g.key === c.group).parts }) : null;
+      if (!stats.has(c.group)) stats.set(c.group, groupColor({ parts: groups.find((g) => g.key === c.group).parts }));
+      const st = L.image && (L.slot === 'baseColor' || L.slot === 'emissive') ? stats.get(c.group)?.sources.find((e) => e.source === si) : null;
       const target = hexToLinear(c.color.hex);
-      const out = stats ? await recolorTexture(lookImage.bytes, lookImage.mime, target.map((t) => t / Math.max(stats.lum, 1e-4)),
+      const out = st ? await recolorTexture(L.image.bytes, L.image.mime, target.map((t) => t / Math.max(st.lum, 1e-4)),
         args.keptTextureSize || DEFAULTS.keptTextureSize, { type: texType, quality: args.compat ? 0.9 : 0.85 }) : null;
       recolored.set(key, { target, out });
     }
     const { target, out } = recolored.get(key);
-    const alpha = origMat.getBaseColorFactor()[3];
-    const mat = origMat.clone().setName(`원래 질감 ${colorLabel(c.color)}`);
+    const alpha = L.mat.getBaseColorFactor()[3];
+    const mat = L.mat.clone().setName(`원래 질감 ${colorLabel(c.color)}`);
     let tex = null;
     if (!out) {
       mat.setBaseColorTexture(null).setBaseColorFactor([...target, alpha]);
     } else {
-      const uri = `recolor_${c.color.hex.replace('#', '')}${out.mimeType === 'image/webp' ? '.webp' : '.jpg'}`;
+      const uri = `recolor_${c.color.hex.replace('#', '')}${si ? `_${si}` : ''}${out.mimeType === 'image/webp' ? '.webp' : '.jpg'}`;
       tex = doc.createTexture(uri).setImage(out.bytes).setMimeType(out.mimeType).setURI(uri);
-      if (lookSlot === 'baseColor') mat.setBaseColorTexture(tex).setBaseColorFactor([1, 1, 1, alpha]);
+      if (L.slot === 'baseColor') mat.setBaseColorTexture(tex).setBaseColorFactor([1, 1, 1, alpha]);
       else mat.setEmissiveTexture(tex).setEmissiveFactor([1, 1, 1]);
     }
-    mat.setExtras({ ...(origMat.getExtras() || {}), material: 'original', color: c.color.name || c.color.hex, colorHex: c.color.hex });
+    mat.setExtras({ ...(L.mat.getExtras() || {}), material: 'original', color: c.color.name || c.color.hex, colorHex: c.color.hex });
     return { mat, tex };
   };
   const cache = new Map(), files = [];
@@ -413,13 +470,17 @@ async function exportVariants(args, progress, sendFile) {
       const c = combo[k];
       if (!parts[k]) continue;
       // kept triangles are shared by the original look and every new colour of this group
-      if (!c.def) { if (origMat) parts[k].prim.setMaterial(origMat); continue; }
+      const own = parts[k].sources || [];
+      if (!c.def) { own.forEach((s, j) => { if (s.material) parts[k].prims[j].setMaterial(s.material); }); continue; }
       if (c.def.recolor) {
-        if (!origMat || !c.color?.hex) continue;
-        const { mat, tex } = await recolor(c);
-        parts[k].prim.setMaterial(mat);
-        made.push(mat);
-        if (tex) madeTex.push(tex);
+        if (!c.color?.hex) continue;
+        for (let j = 0; j < own.length; j++) {
+          const r = await recolor(c, sources.indexOf(own[j]));
+          if (!r) continue;
+          parts[k].prims[j].setMaterial(r.mat);
+          made.push(r.mat);
+          if (r.tex) madeTex.push(r.tex);
+        }
         continue;
       }
       const { mat, def } = await createMaterial(doc, c.def, c.color, loadImage, cache);
