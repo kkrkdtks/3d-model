@@ -242,7 +242,7 @@ export class Viewer {
         }
       });
     }
-    if (this.pickMesh) { this.pickScene.remove(this.pickMesh); this.pickMesh = null; }
+    this.dropPartMaterials();
     this.setCutPreview(-1);
     for (const key of [...this.skins.keys()]) this.removeSkin(key);
     this.baseBox = null;
@@ -250,6 +250,7 @@ export class Viewer {
     this.clearDimensions();
     this.model = this.base = this.overlay = null;
     this.sourceMaterials = this.faceSource = null;
+    for (const k of ['clayMaterial', 'hiddenMaterial']) { this[k]?.dispose(); this[k] = null; }
     this.partCount = 0;
     this.shadow.visible = false;
     this.dirty = true;
@@ -389,6 +390,7 @@ export class Viewer {
 
     // overlay + picking share one welded geometry
     if (this.overlay) { this.overlay.removeFromParent(); this.overlay.geometry.dispose(); }
+    this.dropPartMaterials();
     const sorted = sortByPart(weldedIndex, faceLabels, partCount);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(weldedPos, 3));
@@ -407,11 +409,21 @@ export class Viewer {
       const id = i + 1;
       return new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB((id & 255) / 255, ((id >> 8) & 255) / 255, ((id >> 16) & 255) / 255, THREE.LinearSRGBColorSpace), toneMapped: false });
     });
-    if (this.pickMesh) this.pickScene.remove(this.pickMesh);
     this.pickMesh = new THREE.Mesh(geo, pickMaterials);
     this.pickMesh.matrixAutoUpdate = false;
     this.pickScene.add(this.pickMesh);
     this.dirty = true;
+  }
+
+  /** The per-part overlay and picking materials of the previous split (their geometry is shared and disposed by the caller). */
+  dropPartMaterials() {
+    for (const m of this.overlayMaterials || []) m.dispose();
+    this.overlayMaterials = null;
+    if (this.pickMesh) {
+      this.pickScene.remove(this.pickMesh);
+      for (const m of [this.pickMesh.material].flat()) m.dispose();
+      this.pickMesh = null;
+    }
   }
 
   /** Id of the part under a screen point, or -1. */
@@ -749,11 +761,25 @@ export class Viewer {
   }
 
   /**
-   * Product photo of what is shown: transparent background, no selection colours or dimension
-   * lines, seen from the current direction and framed around the furniture and its floor shadow.
-   * Resolves a PNG Blob of width × height pixels.
+   * Where a product photo is taken from: 'current' (as the view is now), 'front', 'quarter'
+   * (45° from the front, a little above) or 'side', as a unit vector from the furniture.
    */
-  async snapshot({ width = 1600, height = 1200, margin = 0.05 } = {}) {
+  viewDirection(angle = 'current') {
+    if (angle === 'current' || !this.model) return new THREE.Vector3().subVectors(this.camera.position, this.controls.target).normalize();
+    const f = new THREE.Vector3().setComponent(this.axes.d, this.axes.front);
+    const side = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), f).normalize();
+    const dir = angle === 'front' ? f : angle === 'side' ? side : f.multiplyScalar(Math.SQRT1_2).add(side.multiplyScalar(Math.SQRT1_2));
+    dir.y = angle === 'quarter' ? 0.42 : 0.2;
+    return dir.normalize();
+  }
+
+  /**
+   * Product photo of what is shown: no selection colours or dimension lines, seen from the
+   * current direction (or angle, see viewDirection) and framed around the furniture and its
+   * floor shadow. background null = transparent PNG; a CSS colour fills it (a JPEG when
+   * format says so). Resolves a Blob of width × height pixels.
+   */
+  async snapshot({ width = 1600, height = 1200, margin = 0.05, angle = 'current', background = null, format = 'image/png', quality = 0.92 } = {}) {
     if (!this.model) return null;
     const box = this.bounds();
     if (box.isEmpty()) return null;
@@ -766,7 +792,7 @@ export class Viewer {
     cam.clearViewOffset();
     const half = THREE.MathUtils.degToRad(cam.fov / 2);
     const dist = (radius / Math.sin(Math.min(half, Math.atan(Math.tan(half) * cam.aspect)))) * 1.05;
-    const dir = new THREE.Vector3().subVectors(this.camera.position, this.controls.target).normalize();
+    const dir = this.viewDirection(angle);
     cam.position.copy(center).addScaledVector(dir, dist);
     cam.near = dist / 100;
     cam.far = dist * 20;
@@ -804,13 +830,15 @@ export class Viewer {
       r.setSize(width, height, false);
       r.render(this.scene, cam);
       // copy before the browser shows the frame (the drawing buffer is not kept)
-      out.getContext('2d').drawImage(r.domElement, 0, 0);
+      const g = out.getContext('2d');
+      if (background) { g.fillStyle = background; g.fillRect(0, 0, width, height); }
+      g.drawImage(r.domElement, 0, 0);
     } finally {
       for (const o of helpers) o.visible = true;
       r.setPixelRatio(prevRatio);
       r.setSize(prevSize.x, prevSize.y, false);
       this.dirty = true;
     }
-    return new Promise((res, rej) => out.toBlob((b) => (b ? res(b) : rej(new Error('사진을 만들지 못했어요.'))), 'image/png'));
+    return new Promise((res, rej) => out.toBlob((b) => (b ? res(b) : rej(new Error('사진을 만들지 못했어요.'))), format, quality));
   }
 }

@@ -3,7 +3,7 @@
 //
 // Messages in:  { id, cmd, args }
 // Messages out: { id, ok: true, result } | { id, ok: false, error } | { id, progress: { text, frac } }
-//               | { id, file: { name, bytes, sizeMm } } while exporting
+//               | { id, file: { name, bytes, sizeMm, qc } } while exporting
 import { ImageUtils, WebIO } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
@@ -15,6 +15,7 @@ import {
 import { adjacency, segment, undersideHeight, uniqueEdges, valleyCurvature, vertexColors, vertexNormals } from '../core/segment.js';
 import { bboxOf, furnitureAxes } from '../core/size.js';
 import { stripWebPProfile } from './webp.js';
+import { validateBytes } from 'gltf-validator';
 
 const ready = Promise.all([MeshoptDecoder.ready, MeshoptEncoder.ready, MeshoptSimplifier.ready]);
 // tell the page the worker really runs (some sandboxes load it but block WebAssembly)
@@ -356,6 +357,72 @@ async function encodeTexture(bytes, mime, maxSize, { quality = 0.85, type = 'ima
   return { bytes: type === 'image/webp' ? stripWebPProfile(data) : data, mimeType: type };
 }
 
+/** The JSON chunk and the binary chunk of a GLB. */
+function glbChunks(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bytes.byteLength < 20 || dv.getUint32(0, true) !== 0x46546c67) throw new Error('GLB 파일이 아니에요.');
+  let o = 12, json = null, bin = null;
+  while (o + 8 <= bytes.byteLength) {
+    const len = dv.getUint32(o, true), type = dv.getUint32(o + 4, true);
+    const chunk = bytes.subarray(o + 8, o + 8 + len);
+    if (type === 0x4e4f534a) json = JSON.parse(new TextDecoder().decode(chunk));
+    else if (type === 0x004e4942) bin = chunk;
+    o += 8 + len;
+  }
+  if (!json) throw new Error('GLB 안에 JSON이 없어요.');
+  return { json, bin };
+}
+
+/**
+ * What a written file holds, read back from its bytes (so it is what any viewer will see):
+ * triangles, vertices, primitives, materials, images (size and format), extensions.
+ */
+function glbStats(bytes) {
+  const { json, bin } = glbChunks(bytes);
+  const acc = json.accessors || [];
+  let triangles = 0, vertices = 0, primitives = 0;
+  for (const m of json.meshes || [])
+    for (const p of m.primitives || []) {
+      const mode = p.mode ?? 4, n = p.indices != null ? acc[p.indices]?.count || 0 : acc[p.attributes?.POSITION]?.count || 0;
+      primitives++;
+      if (mode === 4) triangles += n / 3;
+      else if (mode === 5 || mode === 6) triangles += Math.max(0, n - 2);
+      vertices += acc[p.attributes?.POSITION]?.count || 0;
+    }
+  const images = (json.images || []).map((im) => {
+    const bv = json.bufferViews?.[im.bufferView];
+    const data = bv && bin ? bin.subarray(bv.byteOffset || 0, (bv.byteOffset || 0) + bv.byteLength) : null;
+    const size = (data && ImageUtils.getSize(data, im.mimeType)) || [0, 0];
+    return { mime: im.mimeType || '', width: size[0], height: size[1], bytes: bv?.byteLength || 0 };
+  });
+  return {
+    bytes: bytes.byteLength, triangles: Math.round(triangles), vertices, primitives,
+    meshes: (json.meshes || []).length, nodes: (json.nodes || []).length, materials: (json.materials || []).length,
+    textures: (json.textures || []).length, images, animations: (json.animations || []).length,
+    extensionsUsed: json.extensionsUsed || [], extensionsRequired: json.extensionsRequired || [],
+  };
+}
+
+/** Khronos glTF validator on the written bytes: { errors, warnings, infos, messages: [{ severity, code, message, pointer }] }. */
+async function validateGlb(bytes) {
+  // tangents are left to the viewer (three.js, model-viewer and Babylon derive them), so that warning is not news
+  const r = await validateBytes(bytes, { maxIssues: 30, ignoredIssues: ['MESH_PRIMITIVE_GENERATED_TANGENT_SPACE'] });
+  const i = r.issues;
+  return {
+    errors: i.numErrors, warnings: i.numWarnings, infos: i.numInfos, hints: i.numHints,
+    messages: (i.messages || []).filter((m) => m.severity <= 1).slice(0, 12).map((m) => ({ severity: m.severity, code: m.code, message: m.message, pointer: m.pointer || '' })),
+    validator: r.validatorVersion || '',
+  };
+}
+
+/** Both checks on a written file; a failure in the validator itself is reported, not thrown. */
+async function inspectGlb(bytes) {
+  const stats = glbStats(bytes);
+  let check;
+  try { check = await validateGlb(bytes); } catch (e) { check = { failed: String(e?.message || e) }; }
+  return { ...stats, check };
+}
+
 /** Outer size of a variant in mm: W and D along the furniture axes, H up (the document is in metres by now). */
 function outerSizeMm(doc, axes) {
   const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
@@ -492,8 +559,12 @@ async function exportVariants(args, progress, sendFile) {
     T.mark(`variant ${i + 1} encode`);
     const name = args.names[i];
     const sizeMm = outerSizeMm(doc, args.axes);
-    sendFile({ name, bytes, sizeMm });
-    files.push({ name, size: bytes.byteLength, sizeMm });
+    // what the file holds, read back from the bytes, and the Khronos validator's verdict
+    progress(`변형 ${i + 1}/${variants.length} 검사 중`, 0.25 + (0.75 * (i + 0.8)) / variants.length);
+    const qc = args.inspect === false ? null : await inspectGlb(bytes).catch((e) => ({ failed: String(e?.message || e) }));
+    T.mark(`variant ${i + 1} check`);
+    sendFile({ name, bytes, sizeMm, qc });
+    files.push({ name, size: bytes.byteLength, sizeMm, qc });
     made.forEach((m) => m.dispose());
     madeTex.forEach((t) => t.dispose());
   }
@@ -508,6 +579,7 @@ const handlers = {
   preview: (args) => preview(args),
   groupColor: (args) => groupColor(args),
   export: (args, progress, sendFile) => exportVariants(args, progress, sendFile),
+  inspect: ({ bytes }) => inspectGlb(new Uint8Array(bytes)),
 };
 
 self.onmessage = async (e) => {

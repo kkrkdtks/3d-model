@@ -103,6 +103,8 @@ h1, h2, h3 { text-wrap: balance; margin: 0; }
 .size-in b { color: var(--accent); font-weight: 700; margin-left: 2px; }
 .size-in .input.num { width: 100%; min-width: 0; text-align: right; }
 .chip.plain { padding: 3px 10px; }
+.chip.plain.on::after { content: none; }
+select.input { appearance: auto; cursor: pointer; }
 .size-in.missing .input { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .choice.size { padding-left: 10px; }
 .sizes-head { margin-top: 6px; }
@@ -232,9 +234,14 @@ details.more[open] summary { margin-bottom: 8px; }
 
 .summary { font-size: 15px; font-weight: 600; }
 .summary small { display: block; font-weight: 400; color: var(--muted); font-size: 12.5px; }
-.files { display: grid; gap: 4px; max-height: 220px; overflow-y: auto; }
-.file-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; font-size: 12.5px; align-items: center; }
+.files { display: grid; gap: 0; max-height: 260px; overflow-y: auto; }
+.file-row { display: grid; grid-template-columns: auto 1fr auto; gap: 2px 8px; font-size: 12.5px; align-items: center; padding: 3px 0; border-bottom: 1px solid var(--line); }
+.file-row:last-child { border-bottom: 0; }
 .file-row .ok { color: var(--ok); font-weight: 700; }
+.file-row.error .ok { color: var(--danger); }
+.file-row.warn .ok { color: var(--warn); }
+.file-row .fqc { grid-column: 2 / -1; color: var(--muted); font-size: 11.5px; line-height: 1.4; cursor: help; }
+.file-row.error .fqc { color: var(--danger); }
 .file-row .fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-row .fsize { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
 .check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; }
@@ -246,6 +253,11 @@ details.more[open] summary { margin-bottom: 8px; }
 .dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; background: var(--surface); color: var(--ink); width: min(560px, calc(100vw - 32px)); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25); }
 .dialog.wide { width: min(980px, calc(100vw - 32px)); }
 .dialog.confirm { width: min(400px, calc(100vw - 32px)); }
+.dialog.help { width: min(720px, calc(100vw - 32px)); }
+.help-body { padding: 6px 22px 14px; overflow-y: auto; display: grid; gap: 14px; }
+.help-body h3 { font-size: 14px; margin: 12px 0 4px; color: var(--accent); letter-spacing: 0.01em; }
+.help-body ol, .help-body ul { margin: 0; padding-left: 1.3em; display: grid; gap: 5px; line-height: 1.55; }
+.help-body li b { font-weight: 600; }
 .confirm-body { padding: 20px 20px 6px; display: grid; gap: 8px; }
 .confirm-body h2 { font-size: 16px; text-wrap: balance; }
 .confirm-body p { margin: 0; color: var(--muted); }

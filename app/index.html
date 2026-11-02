@@ -12,6 +12,7 @@
     <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>가구 스킨 스튜디오</span></div>
     <div class="file-meta" id="fileMeta"></div>
     <div class="top-actions">
+      <button class="btn ghost" data-action="open-help" type="button" title="사용 순서, 단축키, 저장 파일 규격 (F1)">도움말</button>
       <button class="btn ghost" data-action="open-library" type="button">재질·색 관리</button>
       <button class="btn" data-action="open-file" type="button">GLB 열기</button>
       <input type="file" id="fileInput" accept=".glb,model/gltf-binary" hidden>
@@ -29,7 +30,7 @@
         <button class="btn ghost small" type="button" data-action="reset-view">시점 처음으로</button>
         <button class="btn ghost small toggle on" type="button" data-action="dims" aria-pressed="true" title="W·D·H 치수선 보이기/숨기기">치수</button>
         <button class="btn ghost small toggle" type="button" data-action="compare" aria-pressed="false" title="바꾸기 전 원본과 번갈아 보기">원본 보기</button>
-        <button class="btn ghost small" type="button" data-action="save-photo" title="지금 보이는 모습을 배경 없는 PNG로 저장">사진 저장</button>
+        <button class="btn ghost small" type="button" data-action="save-photo" title="지금 보이는 모습을 사진 한 장으로 저장 (배경·크기는 내보내기의 ‘사진·파일 이름 설정’을 따라요)">사진 저장</button>
       </div>
       <div class="stage-badge" id="compareBadge" hidden>원본 (바꾸기 전)</div>
       <div class="legend" id="legend" hidden></div>
@@ -117,6 +118,73 @@
       <span class="note"></span>
       <button class="btn ghost" value="cancel" type="submit" autofocus>취소</button>
       <button class="btn danger-fill" value="ok" type="submit" id="confirmOk">삭제</button>
+    </footer>
+  </form>
+</dialog>
+
+<dialog class="dialog help" id="helpDialog" aria-labelledby="helpTitle">
+  <form method="dialog" class="dialog-body">
+    <header class="dialog-head">
+      <h2 id="helpTitle">도움말</h2>
+      <button class="icon-btn" value="cancel" aria-label="닫기" type="submit">×</button>
+    </header>
+    <div class="help-body">
+      <section>
+        <h3>사용 순서</h3>
+        <ol>
+          <li><b>GLB 열기</b> — 3DAISTUDIO에서 받은 .glb를 화면에 끌어다 놓거나 ‘GLB 열기’를 누르세요. 파일은 이 PC 안에서만 처리돼요.</li>
+          <li><b>실제 크기</b> — 1번에 높이 H(mm)를 꼭 넣으세요. W·D까지 넣으면 그 치수에 맞춰요. 치수선이 3D 화면에 보여요.</li>
+          <li><b>바꿀 부분</b> — 3D 화면에서 부분을 클릭하고 ‘새 그룹으로’. Shift+클릭으로 여러 개, ‘비슷한 부분도’로 다리 네 개 같은 것을 한 번에, 받침대가 붙어 있으면 ‘높이로 나누기’.</li>
+          <li><b>질감과 색</b> — 탭에서 재질을 고르고 hex 색을 여러 개 넣으면 조합마다 변형이 쌓여요. 모델의 질감이 마음에 들면 ‘원래 질감 그대로 · 색만 바꾸기’. 상판처럼 주문 사이즈가 있으면 ‘크기 바꾸기’.</li>
+          <li><b>내보내기</b> — ‘폴더에 저장’ 또는 ‘ZIP으로 받기’. 변형마다 압축된 GLB 하나, 제품 사진, 변형 목록(CSV·JSON), 카탈로그 HTML이 만들어져요. 파일마다 검사 결과가 아래에 나와요.</li>
+        </ol>
+      </section>
+      <section>
+        <h3>마우스와 키</h3>
+        <ul>
+          <li>왼쪽 드래그 회전 · 오른쪽 드래그 이동 · 휠 확대/축소 · ‘시점 처음으로’ 버튼</li>
+          <li>클릭 부분 선택 · <b>Shift</b>+클릭 여러 개 · 빈 곳 클릭 또는 <b>Esc</b> 해제</li>
+          <li>hex 입력칸·크기 입력칸에서 <b>Enter</b> 추가 · 높이 입력칸에서 <b>Enter</b> 나누기 · <b>F1</b> 도움말</li>
+          <li>‘원본 보기’로 바꾸기 전 모습과 번갈아 보고, ‘사진 저장’으로 지금 화면을 한 장 저장해요.</li>
+        </ul>
+      </section>
+      <section>
+        <h3>저장되는 파일</h3>
+        <ul>
+          <li><b>GLB</b> (glTF 2.0 바이너리) — 1 단위 = 1 m 실제 크기, 바닥 가운데가 원점(0, 0, 0), Y가 위. 앞면 방향은 원본 모델 그대로예요. Khronos 3D Commerce 지침과 같은 규격이라 공간무드와 대부분의 3D 뷰어·AR에 바로 들어가요.</li>
+          <li>압축: EXT_meshopt_compression + KHR_mesh_quantization. 텍스처는 WebP(호환 모드는 JPG). 재질은 PBR(천 sheen, 코팅 clearcoat, 헤어라인 anisotropy 확장 포함).</li>
+          <li>부분마다 프리미티브가 따로 들어가고 그룹·재질·색이 기록되어, 이 프로그램으로 다시 열면 그대로 이어서 바꿀 수 있어요.</li>
+          <li><b>제품 사진</b> PNG(투명) 또는 JPG(흰 배경), 각도·크기 선택. <b>변형 목록</b> CSV(엑셀)와 JSON(웹 서비스 등록용). <b>카탈로그 HTML</b> 더블클릭으로 열고 인쇄.</li>
+        </ul>
+      </section>
+      <section>
+        <h3>검사 결과 읽는 법</h3>
+        <ul>
+          <li><b>Khronos 검사 통과</b> — glTF 공식 검사기(glTF Validator)에서 오류가 없다는 뜻이에요. 오류가 있으면 ✗로 표시되고 CSV·JSON에도 적혀요.</li>
+          <li><b>ⓘ 참고</b> — 공간무드에는 제한이 없지만 해외 마켓 기준을 넘는 경우예요: 삼각형 20만 개(아마존 가구), 15 MB(Shopify는 자동 재압축), 텍스처 4096 px 초과, WebP 텍스처(아마존은 PNG·JPG만 → 호환 모드).</li>
+          <li>삼각형을 줄이려면 압축을 ‘가볍게’로, 용량을 줄이려면 ‘그대로 두는 부분의 텍스처’를 2K로 해 보세요.</li>
+        </ul>
+      </section>
+      <section>
+        <h3>자주 묻는 질문</h3>
+        <ul>
+          <li><b>저장 버튼이 안 눌려요</b> — 1번에 실제 높이(H)를 넣어야 해요.</li>
+          <li><b>공간무드나 다른 프로그램에서 안 열려요</b> — ‘호환 모드’를 켜고 다시 저장하세요 (용량은 커져요).</li>
+          <li><b>부분이 잘 안 나뉘어요</b> — 2번의 ‘부분이 잘 안 나뉘었나요?’에서 민감도를 올리거나, 그 부분을 클릭하고 ‘높이로 나누기’.</li>
+          <li><b>다른 PC에서 이어서 하고 싶어요</b> — ‘재질·색 관리’ → ‘내보내기 (.zip)’으로 재질·색·작업 기록을 옮기세요. 같은 GLB 파일을 열면 지난 작업이 그대로 나와요.</li>
+          <li><b>미리보기 창에서 열면 안 돼요</b> — 이 HTML 파일을 내려받아 더블클릭하면 크롬·엣지에서 열려요. 인터넷은 필요 없어요.</li>
+          <li><b>색이 생각과 달라요</b> — hex 색은 encycolorpedia.com 코드 그대로예요. 가죽·원단은 질감 때문에 조금 어둡게 보일 수 있어요. 가장 밝은 부분이 그 색이 되도록 맞춰요.</li>
+        </ul>
+      </section>
+      <section>
+        <h3>들어 있는 오픈소스</h3>
+        <p class="note">three.js 0.170 (MIT) · glTF Transform 4.5 (MIT) · meshoptimizer 0.25 (MIT) · fflate 0.8 (MIT) · Khronos glTF Validator 2.0 (Apache-2.0). 기본 질감 텍스처는 이 프로그램을 만들면서 직접 생성한 것이라 외부 저작권이 없어요.</p>
+      </section>
+      <p class="note" id="helpVersion"></p>
+    </div>
+    <footer class="dialog-foot">
+      <span class="note">이 프로그램은 인터넷 없이 동작하고, 파일을 어디로도 보내지 않아요.</span>
+      <button class="btn" value="cancel" type="submit">닫기</button>
     </footer>
   </form>
 </dialog>

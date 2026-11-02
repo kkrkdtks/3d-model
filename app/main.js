@@ -57,8 +57,19 @@ const QUALITY = {
 };
 // boundary sensitivity the worker splits with when a file opens (threshold 165 − 105 = 60)
 const DEFAULT_SENSITIVITY = 105;
-// product photos: 4:3, big enough for a catalogue page
-const PHOTO = { width: 1600, height: 1200 };
+// product photos: sizes to choose from, and the directions they can be taken from
+const PHOTO_SIZES = { '1600x1200': '1600×1200 (4:3)', '2000x1500': '2000×1500 (4:3)', '1200x1200': '1200×1200 (정사각)', '2000x2000': '2000×2000 (정사각)' };
+const PHOTO_ANGLES = {
+  current: { label: '지금 보는 방향', ko: '지금', en: 'view' },
+  front: { label: '정면', ko: '정면', en: 'front' },
+  quarter: { label: '45°', ko: '45도', en: '45' },
+  side: { label: '옆', ko: '옆', en: 'side' },
+};
+const THUMB_PX = 480;
+// what to point out about a written file (marketplace rules; 공간무드 itself sets no limit)
+const QC_LIMITS = { triangles: 200000, bytes: 15 * 1048576, texture: 4096 };
+// settings kept on this PC for every model (a model's own saved work may override the first three)
+const PREF_KEYS = ['quality', 'keptTex', 'compat', 'photos', 'photo', 'catalog', 'naming'];
 
 // ---------- state ----------
 
@@ -71,7 +82,11 @@ const S = {
   segColor: true, segColorUsed: true, hasColor: false, segBase: true, segBaseUsed: true, cuts: [], cut: null,
   selection: new Set(), groups: [], active: null, view: 'material', hover: -1, compare: false,
   tab: '가죽', quality: 'standard', keptTex: 4096, compat: false, prefix: '', photos: true,
-  colors: [], results: [], resultNote: '', exporting: false, confirmReseg: false, moreOpen: false,
+  // product photos: directions, background (transparent PNG or white JPG), size, a small list thumbnail too
+  photo: { angles: ['current'], bg: 'transparent', size: '1600x1200', thumb: false }, catalog: true,
+  // file names: 'ko' as the groups and materials are called, 'en' letters and digits only (web services, marketplaces)
+  naming: 'ko',
+  colors: [], results: [], resultNote: '', exporting: false, confirmReseg: false, moreOpen: false, exportMoreOpen: false,
   workKey: null, resumed: null,
 };
 const activeGroup = () => S.groups.find((g) => g.key === S.active) || null;
@@ -199,6 +214,35 @@ const choiceLabel = (c) => {
   const name = c.color.name && c.color.name !== c.color.hex ? `${c.color.name} ` : '';
   return `${def?.name || c.materialId} · ${name}${c.color.hex}`;
 };
+
+// ---------- settings kept on this PC ----------
+
+function normalizePhoto(p) {
+  const angles = Array.isArray(p?.angles) ? p.angles.filter((a) => PHOTO_ANGLES[a]) : [];
+  return {
+    angles: angles.length ? [...new Set(angles)] : ['current'],
+    bg: p?.bg === 'white' ? 'white' : 'transparent',
+    size: PHOTO_SIZES[p?.size] ? p.size : '1600x1200',
+    thumb: !!p?.thumb,
+  };
+}
+
+function applyPrefs(p) {
+  if (!p || typeof p !== 'object') return;
+  if (QUALITY[p.quality]) S.quality = p.quality;
+  if (p.keptTex === 2048 || p.keptTex === 4096) S.keptTex = p.keptTex;
+  if (typeof p.compat === 'boolean') S.compat = p.compat;
+  if (typeof p.photos === 'boolean') S.photos = p.photos;
+  if (p.photo) S.photo = normalizePhoto(p.photo);
+  if (typeof p.catalog === 'boolean') S.catalog = p.catalog;
+  if (p.naming === 'en' || p.naming === 'ko') S.naming = p.naming;
+}
+
+function savePrefs() {
+  const prefs = {};
+  for (const k of PREF_KEYS) prefs[k] = S[k];
+  store.setKV('prefs', prefs).catch((e) => console.warn('설정을 기억하지 못했어요', e));
+}
 
 // ---------- 3D view ----------
 
@@ -1107,18 +1151,93 @@ function renderExport() {
         <button type="button" data-action="kept-tex" data-size="2048" class="${S.keptTex === 2048 ? 'on' : ''}">2K (가벼움)</button>
       </div></div>
     <label class="check"><input type="checkbox" id="photos" ${S.photos ? 'checked' : ''}>
-      <span>제품 사진도 같이 저장<small>변형마다 PNG 한 장을 배경 없이, 지금 3D 화면의 각도로 찍어요. 폴더나 ZIP에는 변형 목록(엑셀에서 여는 CSV)도 같이 들어가요.</small></span></label>
+      <span>제품 사진도 같이 저장<small>변형마다 ${photoSummary()}. 폴더나 ZIP에는 변형 목록(엑셀용 CSV, 웹 등록용 JSON)${S.catalog ? '과 카탈로그 HTML' : ''}도 같이 들어가요.</small></span></label>
     <label class="check"><input type="checkbox" id="compat" ${S.compat ? 'checked' : ''}>
-      <span>호환 모드<small>파일이 공간무드나 다른 프로그램에서 안 열릴 때만 켜세요. 용량이 2~3배 커져요.</small></span></label>
-    <div class="field"><label for="prefix">파일 이름 앞부분</label><input class="input" id="prefix" value="${esc(S.prefix)}"></div>
+      <span>호환 모드<small>파일이 공간무드나 다른 프로그램에서 안 열릴 때, 또는 텍스처를 JPG로 요구하는 마켓(아마존 등)에 올릴 때 켜세요. 용량이 2~3배 커져요.</small></span></label>
+    <div class="field"><label for="prefix">파일 이름 앞부분</label><input class="input" id="prefix" value="${esc(S.prefix)}" spellcheck="false">
+      ${S.naming === 'en' && asciiName(S.prefix || S.file.base, '') === '' ? '<p class="warn-text">영문 파일 이름을 쓰려면 앞부분에 영문·숫자를 넣어 주세요. 비워 두면 ‘model’로 저장돼요.</p>' : ''}</div>
+    <details class="more" id="exportMore" ${S.exportMoreOpen ? 'open' : ''}><summary>사진·파일 이름 설정</summary><div class="more-body">
+      <div class="field"><span class="label">사진 각도 <span class="note">(여러 개 고르면 변형마다 그만큼 찍어요)</span></span>
+        <div class="colors">${Object.entries(PHOTO_ANGLES).map(([k, v]) => `<button class="chip plain ${S.photo.angles.includes(k) ? 'on' : ''}" type="button" data-action="photo-angle" data-angle="${k}">${v.label}</button>`).join('')}</div></div>
+      <div class="field"><span class="label">배경</span>
+        <div class="seg flat" role="group">
+          <button type="button" data-action="photo-bg" data-bg="transparent" class="${S.photo.bg === 'transparent' ? 'on' : ''}">투명 (PNG)</button>
+          <button type="button" data-action="photo-bg" data-bg="white" class="${S.photo.bg === 'white' ? 'on' : ''}">흰색 (JPG)</button>
+        </div></div>
+      <div class="field"><label for="photoSize">사진 크기</label>
+        <select class="input" id="photoSize">${Object.entries(PHOTO_SIZES).map(([k, v]) => `<option value="${k}" ${S.photo.size === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+      <label class="check"><input type="checkbox" id="photoThumb" ${S.photo.thumb ? 'checked' : ''}>
+        <span>목록용 썸네일도<small>첫 번째 각도의 사진을 ${THUMB_PX}px로 줄인 작은 사진이 하나 더 생겨요.</small></span></label>
+      <label class="check"><input type="checkbox" id="catalog" ${S.catalog ? 'checked' : ''}>
+        <span>카탈로그 HTML도<small>변형마다 사진·재질·색 코드·크기가 한 장에 정리된 파일이에요. 더블클릭하면 브라우저에서 열리고 인쇄도 돼요.</small></span></label>
+      <div class="field"><span class="label">파일 이름</span>
+        <div class="seg flat" role="group">
+          <button type="button" data-action="naming" data-naming="ko" class="${S.naming === 'ko' ? 'on' : ''}">한글 (그룹·재질 이름)</button>
+          <button type="button" data-action="naming" data-naming="en" class="${S.naming === 'en' ? 'on' : ''}">영문 (재질 ID·색 코드)</button>
+        </div>
+        <p class="note" id="nameExample">예: ${esc(exampleName())}</p></div>
+    </div></details>
     <div class="actions">
       <button class="btn" type="button" data-action="export-folder" ${count ? off : 'disabled'}>폴더에 저장</button>
       <button class="btn ghost" type="button" data-action="export-zip" ${count ? off : 'disabled'}>ZIP으로 받기</button>
       <button class="btn ghost full" type="button" data-action="export-compress" ${off}>재질은 그대로, 압축만 하기</button>
     </div>
-    ${S.results.length ? `<div class="files">${S.results.map((r) => `<div class="file-row"><span class="ok">✓</span><span class="fname" title="${esc(r.name)}">${esc(r.name)}</span><span class="fsize">${fmtMB(r.size)}</span></div>`).join('')}</div>
+    ${S.results.length ? `<div class="files">${S.results.map((r) => fileRow(r)).join('')}</div>
       <p class="note">${esc(S.resultNote)}</p>` : ''}`;
   saveWorkSoon();
+}
+
+/** One line of the export results: the file, its size and what the check of it found. */
+function fileRow(r) {
+  const q = qcReport(r.qc);
+  const mark = { ok: '✓', info: '✓', warn: '⚠', error: '✗', none: '✓' }[q.status];
+  return `<div class="file-row ${q.status}"><span class="ok">${mark}</span><span class="fname" title="${esc(r.name)}">${esc(r.name)}</span><span class="fsize">${fmtMB(r.size)}</span>
+    ${q.line ? `<span class="fqc" title="${esc(q.title)}">${esc(q.line)}${q.notes.length ? ` · ⓘ ${esc(q.notes.join(' · '))}` : ''}</span>` : ''}</div>`;
+}
+
+/** What the photo settings will produce, in words for the checkbox. */
+function photoSummary() {
+  const angles = S.photo.angles.map((a) => PHOTO_ANGLES[a].label).join('·');
+  const [w, h] = S.photo.size.split('x');
+  return `${S.photo.bg === 'white' ? '흰 배경 JPG' : '배경 없는 PNG'} ${S.photo.angles.length > 1 ? `${S.photo.angles.length}장 (${angles})` : `한 장 (${angles})`}, ${w}×${h}px${S.photo.thumb ? ' + 썸네일' : ''}`;
+}
+
+/** A file name as the current settings would write it, for the hint under the naming choice. */
+function exampleName() {
+  const g = S.groups.find((x) => x.choices.length) || S.groups[0];
+  const base = S.prefix || S.file?.base || '소파';
+  if (!g) return variantName(base, []);
+  const c = g.choices.find((x) => x.id === g.active) || g.choices[0];
+  const def = c ? materialById(c.materialId) : null;
+  return variantName(base, [{ group: g.key, def, color: c?.color || null, size: null }]);
+}
+
+/**
+ * What a written file holds, judged: status ok | warn (validator could not run, or warnings) |
+ * error (validator errors) | none; line (the figures); notes (marketplace limits it exceeds; 공간무드 itself has none).
+ */
+function qcReport(qc) {
+  if (!qc) return { status: 'none', line: '', notes: [], title: '' };
+  if (qc.failed && !qc.triangles) return { status: 'warn', line: `검사하지 못했어요: ${qc.failed}`, notes: [], title: '' };
+  const c = qc.check || {};
+  const maxTex = Math.max(0, ...qc.images.map((im) => Math.max(im.width, im.height)));
+  const errors = c.failed ? -1 : c.errors || 0;
+  const verdict = c.failed ? `검사기 오류 (${c.failed})` : errors ? `Khronos 검사 오류 ${errors}개` : 'Khronos 검사 통과';
+  const line = `삼각형 ${fmtInt(qc.triangles)} · 텍스처 ${qc.images.length}장${maxTex ? ` (최대 ${maxTex}px)` : ''} · ${verdict}`;
+  const notes = [];
+  if (qc.triangles > QC_LIMITS.triangles) notes.push(`삼각형 ${fmtInt(QC_LIMITS.triangles)}개 초과 (아마존 가구 기준)`);
+  if (qc.bytes > QC_LIMITS.bytes) notes.push('15MB 초과 (Shopify는 자동 재압축)');
+  if (maxTex > QC_LIMITS.texture) notes.push(`텍스처 ${QC_LIMITS.texture}px 초과`);
+  if (qc.images.some((im) => im.mime === 'image/webp')) notes.push('WebP 텍스처 (아마존은 PNG·JPG만: 호환 모드)');
+  if (qc.animations) notes.push('애니메이션 포함');
+  if (c.warnings) notes.push(`검사 경고 ${c.warnings}개`);
+  const title = [
+    `정점 ${fmtInt(qc.vertices)} · 프리미티브 ${qc.primitives} · 재질 ${qc.materials}`,
+    qc.images.map((im) => `${im.width}×${im.height} ${im.mime.replace('image/', '')} ${fmtMB(im.bytes)}`).join(', '),
+    `확장: ${qc.extensionsUsed.join(', ') || '없음'}`,
+    ...(c.messages || []).map((m) => `${m.severity === 0 ? '오류' : '경고'} ${m.code}: ${m.message}${m.pointer ? ` (${m.pointer})` : ''}`),
+  ].filter(Boolean).join('\n');
+  return { status: errors ? 'error' : c.failed ? 'warn' : notes.length ? 'info' : 'ok', line, notes, title, errors, warnings: c.warnings || 0 };
 }
 
 // ---------- export ----------
@@ -1138,6 +1257,7 @@ const SAVE_TYPES = {
   zip: { description: 'ZIP 파일', accept: { 'application/zip': ['.zip'] } },
   glb: { description: 'GLB 3D 모델', accept: { 'model/gltf-binary': ['.glb'] } },
   png: { description: 'PNG 사진', accept: { 'image/png': ['.png'] } },
+  jpg: { description: 'JPG 사진', accept: { 'image/jpeg': ['.jpg'] } },
 };
 
 /**
@@ -1173,16 +1293,63 @@ async function saveTo(target, name, data) {
 }
 
 const safeName = (s) => String(s).replace(/[\\/:*?"<>|#\s]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+/** Letters, digits, _ and - only (what web services and marketplaces accept everywhere); fallback when nothing is left. */
+const asciiName = (s, fallback) => {
+  const a = String(s ?? '').normalize('NFKD').replace(/[^\x20-\x7e]/g, '').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  return a || fallback;
+};
+const en = () => S.naming === 'en';
+/** The base of every file name: the prefix (or the model's name), in the chosen alphabet. */
+const nameBase = (base) => (en() ? asciiName(base, 'model') : safeName(base));
+/** Names of the files that come with the variants, by what they are. */
+const sideName = (base, kind) => `${nameBase(base)}${{
+  list: en() ? '_variants.csv' : '_변형목록.csv', json: en() ? '_variants.json' : '_변형목록.json', catalog: en() ? '_catalog.html' : '_카탈로그.html',
+}[kind]}`;
 
-/** File name of a variant, e.g. 소파__쿠션-무광-가죽-코냑-8B4A22.glb */
+/** File name of a variant, e.g. 소파__쿠션-무광-가죽-코냑-8B4A22.glb, or sofa__g1-leather-matte-8B4A22.glb in English. */
 function variantName(base, combo) {
-  if (!combo.length) return `${safeName(base)}_압축.glb`;
+  if (!combo.length) return `${nameBase(base)}${en() ? '_compressed' : '_압축'}.glb`;
   const parts = combo.map((c) => {
     const g = S.groups.find((x) => x.key === c.group);
     const size = c.size && g ? sizeLabel(c.size, groupSizeMm(g)) : '';
+    if (en()) {
+      const hex = c.color?.hex ? c.color.hex.replace('#', '').toUpperCase() : '';
+      return [g ? asciiName(g.name, `g${S.groups.indexOf(g) + 1}`) : '', size.replace('×', 'x'), c.def ? asciiName(c.def.id, 'material') : '', hex].filter(Boolean).join('-');
+    }
     return [g?.name, size, c.def?.name, colorLabel(c.color)].filter(Boolean).map(safeName).join('-');
   });
-  return `${safeName(base)}__${parts.join('__')}.glb`;
+  return `${nameBase(base)}__${parts.join('__')}.glb`;
+}
+
+/** Photo settings as the viewer takes them, for one direction. */
+function photoOpts(angle = 'current') {
+  const [width, height] = S.photo.size.split('x').map(Number);
+  const white = S.photo.bg === 'white';
+  return { width, height, angle, background: white ? '#ffffff' : null, format: white ? 'image/jpeg' : 'image/png', quality: 0.92 };
+}
+const photoExt = () => (S.photo.bg === 'white' ? '.jpg' : '.png');
+
+/** The photo files of a variant: one per chosen direction (no suffix when there is just one) and the thumbnail. */
+function photoFilesFor(glbName, base) {
+  const stem = glbName.replace(/\.glb$/, ''), ext = photoExt(), one = S.photo.angles.length === 1;
+  const angles = {};
+  for (const a of S.photo.angles) angles[a] = one ? `${stem}${ext}` : `${stem}_${PHOTO_ANGLES[a][en() ? 'en' : 'ko']}${ext}`;
+  return { angles, thumb: S.photo.thumb ? `${stem}${en() ? '_thumb' : '_썸네일'}${ext}` : null };
+}
+
+/** A smaller copy of a photo (its long side max px), same background and format. */
+async function thumbnail(blob, max, { background, format }) {
+  const bmp = await createImageBitmap(blob);
+  const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(bmp.width * s));
+  c.height = Math.max(1, Math.round(bmp.height * s));
+  const g = c.getContext('2d');
+  g.imageSmoothingQuality = 'high';
+  if (background) { g.fillStyle = background; g.fillRect(0, 0, c.width, c.height); }
+  g.drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close();
+  return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('썸네일을 만들지 못했어요.'))), format, 0.9));
 }
 
 async function runExport(kind) {
@@ -1211,11 +1378,11 @@ async function runExport(kind) {
     used.add(n);
     return n;
   });
-  // a product photo per variant and the list of variants come along (not with the plain compressed copy)
-  const photoNames = !compressOnly && S.photos ? names.map((n) => n.replace(/\.glb$/, '.png')) : null;
-  const single = names.length === 1 && !photoNames;
-  const listName = `${safeName(base)}_변형목록.csv`;
-  const zipName = `${safeName(base)}_변형${names.length}개.zip`;
+  // product photos per variant and the lists of variants come along (not with the plain compressed copy)
+  const photoFiles = !compressOnly && S.photos ? names.map((n) => photoFilesFor(n, base)) : null;
+  const single = names.length === 1 && !photoFiles;
+  const listName = sideName(base, 'list'), jsonName = sideName(base, 'json'), catalogName = sideName(base, 'catalog');
+  const zipName = `${nameBase(base)}${en() ? `_variants-${names.length}` : `_변형${names.length}개`}.zip`;
   const target = await pickTarget(kind === 'folder' ? 'folder' : 'file', single ? names[0] : zipName);
   if (!target) return;
 
@@ -1231,8 +1398,8 @@ async function runExport(kind) {
   };
   let shots = 0;
   try {
-    if (photoNames) {
-      shots = await takePhotos(plan, async (i, blob) => put(photoNames[i], new Uint8Array(await blob.arrayBuffer())));
+    if (photoFiles) {
+      shots = await takePhotos(plan, photoFiles, async (name, blob) => put(name, new Uint8Array(await blob.arrayBuffer())));
     }
     busy('준비 중', 0);
     const textures = {};
@@ -1247,14 +1414,20 @@ async function runExport(kind) {
     }, {
       onProgress: (p) => busy(p.text, p.frac),
       onFile: (f) => {
-        S.results.push({ name: f.name, size: f.bytes.byteLength });
-        made[names.indexOf(f.name)] = { size: f.bytes.byteLength, sizeMm: f.sizeMm };
+        S.results.push({ name: f.name, size: f.bytes.byteLength, qc: f.qc || null });
+        made[names.indexOf(f.name)] = { size: f.bytes.byteLength, sizeMm: f.sizeMm, qc: f.qc || null };
         renderExport();
         put(f.name, new Uint8Array(f.bytes));
       },
     });
     console.info('내보내기 시간(ms)', JSON.stringify(res.timings));
-    if (!single && !compressOnly) put(listName, new TextEncoder().encode(variantCsv(plan, names, photoNames, made)));
+    const lists = !single && !compressOnly;
+    if (lists) {
+      const enc = new TextEncoder();
+      put(listName, enc.encode(variantCsv(plan, names, photoFiles, made)));
+      put(jsonName, enc.encode(variantJson(plan, names, photoFiles, made)));
+      if (photoFiles && S.catalog) put(catalogName, enc.encode(catalogHtml(plan, names, photoFiles, made)));
+    }
     await Promise.all(writes);
     if (!target.dir) {
       busy('파일 저장 중', 1);
@@ -1264,8 +1437,11 @@ async function runExport(kind) {
     const total = S.results.reduce((a, r) => a + r.size, 0);
     const secs = Math.max(1, Math.round((performance.now() - t0) / 1000));
     const where = target.dir ? `‘${target.dir.name}’ 폴더에 저장했어요` : target.file ? `‘${target.file.name}’로 저장했어요` : '다운로드 폴더를 확인하세요';
-    const extras = [shots ? `제품 사진 ${shots}장` : '', !single && !compressOnly ? '변형 목록(CSV)' : ''].filter(Boolean).join(', ');
-    S.resultNote = `${S.results.length}개 · 모두 ${fmtMB(total)} (원본 ${fmtMB(S.file.size)}) · ${secs}초${extras ? ` · ${extras}도 함께` : ''} · ${where}`;
+    const extras = [shots ? `제품 사진 ${shots}장` : '', lists ? '변형 목록(CSV·JSON)' : '', lists && photoFiles && S.catalog ? '카탈로그 HTML' : ''].filter(Boolean).join(', ');
+    const checked = S.results.filter((r) => r.qc && !r.qc.failed);
+    const bad = checked.filter((r) => qcReport(r.qc).errors > 0).length;
+    const verdict = !checked.length ? '' : bad ? ` · ⚠ 검사 오류 ${bad}개 파일` : ` · Khronos 검사 ${checked.length}개 모두 통과`;
+    S.resultNote = `${S.results.length}개 · 모두 ${fmtMB(total)} (원본 ${fmtMB(S.file.size)}) · ${secs}초${extras ? ` · ${extras}도 함께` : ''}${verdict} · ${where}`;
     toast(where);
   } catch (e) {
     console.error(e);
@@ -1278,11 +1454,11 @@ async function runExport(kind) {
 }
 
 /**
- * Product photo of every variant: each combination is put on the 3D view in turn and photographed
- * from the current direction. The panel is locked meanwhile so nothing changes under the camera.
- * Returns how many photos were taken (a failure keeps the GLB export going).
+ * Product photos of every variant: each combination is put on the 3D view in turn and photographed
+ * from every chosen direction (files[i].angles), plus the thumbnail. The panel is locked meanwhile
+ * so nothing changes under the camera. Returns how many photos were taken (a failure keeps the GLB export going).
  */
-async function takePhotos(plan, onPhoto) {
+async function takePhotos(plan, files, onPhoto) {
   const keep = { view: S.view, hover: S.hover, compare: S.compare, picks: S.groups.map((g) => [g, g.active, g.activeSize]) };
   Object.assign(S, { view: 'material', hover: -1, compare: false });
   document.body.classList.add('shooting');
@@ -1292,8 +1468,16 @@ async function takePhotos(plan, onPhoto) {
       busy(`제품 사진 찍는 중 ${i + 1}/${plan.length}`, i / plan.length);
       for (const { g, choice, size } of plan[i]) { g.active = choice?.id || null; g.activeSize = size?.id || null; }
       await Promise.all(plan[i].map(({ g }) => updatePreview(g)));
-      const blob = await viewer.snapshot(PHOTO);
-      if (blob) { await onPhoto(i, blob); n++; }
+      let first = null;
+      for (const [angle, name] of Object.entries(files[i].angles)) {
+        const opts = photoOpts(angle);
+        const blob = await viewer.snapshot(opts);
+        if (!blob) continue;
+        await onPhoto(name, blob);
+        n++;
+        if (!first) first = { blob, opts };
+      }
+      if (files[i].thumb && first) await onPhoto(files[i].thumb, await thumbnail(first.blob, THUMB_PX, first.opts));
     }
   } catch (e) {
     console.error(e);
@@ -1309,25 +1493,117 @@ async function takePhotos(plan, onPhoto) {
 }
 
 /** The list of variants for Excel: one row per file with what each group got (UTF-8 with BOM so Excel reads Korean). */
-function variantCsv(plan, names, photoNames, made) {
+function variantCsv(plan, names, photoFiles, made) {
   const groups = plan[0].map(({ g }) => g);
-  const head = ['번호', 'GLB 파일', ...(photoNames ? ['사진 파일'] : []), 'W(mm)', 'D(mm)', 'H(mm)'];
-  for (const g of groups) head.push(`${g.name} 재질`, `${g.name} 색 이름`, `${g.name} 색 코드`, ...(g.sizes.length ? [`${g.name} 크기(mm)`] : []));
-  head.push('용량(MB)');
+  const angles = photoFiles ? S.photo.angles : [];
+  const head = ['번호', 'GLB 파일', ...angles.map((a) => (angles.length === 1 ? '사진 파일' : `사진 ${PHOTO_ANGLES[a].label}`)), ...(photoFiles && S.photo.thumb ? ['썸네일'] : []), 'W(mm)', 'D(mm)', 'H(mm)'];
+  for (const g of groups) head.push(`${g.name} 재질`, `${g.name} 재질 ID`, `${g.name} 색 이름`, `${g.name} 색 코드`, ...(g.sizes.length ? [`${g.name} 크기(mm)`] : []));
+  head.push('용량(MB)', '삼각형', '텍스처(장)', '텍스처 최대(px)', '검사', '참고');
   const rows = plan.map((combo, i) => {
-    const f = made[i];
-    const row = [i + 1, names[i], ...(photoNames ? [photoNames[i]] : []), f?.sizeMm?.w ?? '', f?.sizeMm?.d ?? '', f?.sizeMm?.h ?? ''];
+    const f = made[i], q = qcReport(f?.qc);
+    const row = [i + 1, names[i], ...angles.map((a) => photoFiles[i].angles[a]), ...(photoFiles && S.photo.thumb ? [photoFiles[i].thumb] : []), f?.sizeMm?.w ?? '', f?.sizeMm?.d ?? '', f?.sizeMm?.h ?? ''];
     for (const { g, choice, size } of combo) {
       const def = choice ? materialById(choice.materialId) : null;
       const c = choice?.color;
-      row.push(def?.name || '원본 그대로', def?.colorMode === 'photo' ? '사진 색' : c?.name && c.name !== c.hex ? c.name : '', c?.hex || '');
+      row.push(def?.name || '원본 그대로', def?.id || '', def?.colorMode === 'photo' ? '사진 색' : c?.name && c.name !== c.hex ? c.name : '', c?.hex || '');
       if (g.sizes.length) row.push(size ? sizeLabel(size, groupSizeMm(g)) : '');
     }
-    row.push(f ? (f.size / 1048576).toFixed(1) : '');
+    const qc = f?.qc;
+    row.push(f ? (f.size / 1048576).toFixed(1) : '', qc?.triangles ?? '', qc?.images?.length ?? '', qc?.images?.length ? Math.max(...qc.images.map((im) => Math.max(im.width, im.height))) : '',
+      !qc ? '' : q.status === 'error' ? `오류 ${q.errors}개` : q.status === 'warn' ? '검사 못 함' : '통과', q.notes.join(' / '));
     return row;
   });
   const cell = (v) => { const s = String(v ?? ''); return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   return `﻿${[head, ...rows].map((r) => r.map(cell).join(',')).join('\r\n')}\r\n`;
+}
+
+/** The same list for programs (a web service that registers the files): one object per variant. */
+function variantJson(plan, names, photoFiles, made) {
+  const groups = plan[0].map(({ g }) => g);
+  const r = realSize();
+  const mm = (v) => (Number.isFinite(v) ? Math.round(v) : null);
+  const data = {
+    generator: `가구 스킨 스튜디오 ${VERSION}`, created: new Date().toISOString(), product: S.prefix || S.file.base,
+    source: { file: S.file.name, bytes: S.file.size },
+    units: 'm', up: '+Y', origin: 'floor-center', sizeMm: { w: mm(r.w), d: mm(r.d), h: mm(r.h) },
+    groups: groups.map((g, i) => ({ index: i + 1, name: g.name, parts: g.parts.length })),
+    variants: plan.map((combo, i) => {
+      const f = made[i], q = qcReport(f?.qc), qc = f?.qc;
+      return {
+        index: i + 1, file: names[i],
+        photos: photoFiles ? photoFiles[i].angles : null, thumbnail: photoFiles?.[i].thumb || null,
+        sizeMm: f?.sizeMm || null, bytes: f?.size ?? null,
+        groups: combo.map(({ g, choice, size }) => {
+          const def = choice ? materialById(choice.materialId) : null, c = choice?.color;
+          return {
+            name: g.name, material: def ? { id: def.id, name: def.name, category: def.category || null } : null,
+            color: c ? { name: c.name && c.name !== c.hex ? c.name : null, hex: c.hex } : null,
+            sizeMm: size ? { w: size.w, d: size.d ?? null } : null,
+          };
+        }),
+        check: !qc ? null : {
+          triangles: qc.triangles ?? null, vertices: qc.vertices ?? null, materials: qc.materials ?? null,
+          textures: (qc.images || []).map((im) => ({ width: im.width, height: im.height, mime: im.mime, bytes: im.bytes })),
+          extensions: qc.extensionsUsed || [], validator: qc.check?.failed ? null : { errors: qc.check?.errors ?? null, warnings: qc.check?.warnings ?? null },
+          status: q.status, notes: q.notes,
+        },
+      };
+    }),
+  };
+  return JSON.stringify(data, null, 2);
+}
+
+/** A one-page catalogue of the variants (photo, materials, colours, size, file) to open in a browser or print. */
+function catalogHtml(plan, names, photoFiles, made) {
+  const product = S.prefix || S.file.base, r = realSize();
+  const title = (combo) => combo.map(({ g, choice }) => {
+    const def = choice ? materialById(choice.materialId) : null, c = choice?.color;
+    return `${g.name} ${def?.name || '원본'}${c ? ` ${c.name && c.name !== c.hex ? c.name : c.hex}` : ''}`;
+  }).join(' · ');
+  const cards = plan.map((combo, i) => {
+    const photos = Object.values(photoFiles[i].angles), f = made[i], sz = f?.sizeMm;
+    const lines = combo.map(({ g, choice, size }) => {
+      const def = choice ? materialById(choice.materialId) : null, c = choice?.color;
+      return `<li><b>${esc(g.name)}</b> ${esc(def?.name || '원본 그대로')}${c ? ` <i style="background:${esc(c.hex)}"></i>${c.name && c.name !== c.hex ? ` ${esc(c.name)}` : ''} <code>${esc(c.hex)}</code>` : ''}${size ? ` · ${esc(sizeLabel(size, groupSizeMm(g)))}mm` : ''}</li>`;
+    }).join('');
+    return `<article>
+  <figure>${photos.length ? `<img src="${esc(encodeURIComponent(photos[0]))}" alt="" loading="lazy">` : '<div class="noimg">사진 없음</div>'}</figure>
+  ${photos.length > 1 ? `<div class="more">${photos.slice(1).map((p) => `<img src="${esc(encodeURIComponent(p))}" alt="" loading="lazy">`).join('')}</div>` : ''}
+  <h2>${i + 1}. ${esc(title(combo))}</h2>
+  <ul>${lines}</ul>
+  <p class="meta">${sz ? `W ${fmtInt(sz.w)} × D ${fmtInt(sz.d)} × H ${fmtInt(sz.h)} mm` : ''}${f ? ` · ${fmtMB(f.size)}` : ''}<br><code>${esc(names[i])}</code></p>
+</article>`;
+  }).join('\n');
+  return `<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(product)} 변형 카탈로그</title>
+<style>
+:root { color-scheme: light; }
+body { margin: 0; font: 14px/1.5 "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; color: #241f1a; background: #f6f3ee; }
+header { padding: 28px 32px 16px; }
+h1 { margin: 0 0 4px; font-size: 24px; letter-spacing: -0.01em; }
+header p { margin: 0; color: #6f665c; }
+main { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 18px; padding: 0 32px 40px; }
+article { background: #fff; border: 1px solid #e2dbd0; border-radius: 12px; padding: 14px; break-inside: avoid; }
+figure { margin: 0 0 8px; background: #f1eee9; border-radius: 8px; overflow: hidden; aspect-ratio: 4 / 3; display: grid; place-items: center; }
+figure img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.more { display: flex; gap: 6px; margin-bottom: 8px; }
+.more img { width: 72px; height: 54px; object-fit: contain; background: #f1eee9; border-radius: 6px; }
+.noimg { color: #9a9086; }
+h2 { margin: 0 0 6px; font-size: 15px; }
+ul { margin: 0 0 8px; padding-left: 18px; }
+li i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; border: 1px solid rgba(0,0,0,0.15); margin-left: 2px; }
+code { font-family: Consolas, "D2Coding", ui-monospace, monospace; font-size: 12px; color: #6f665c; word-break: break-all; }
+.meta { margin: 0; color: #6f665c; font-size: 12.5px; }
+@media print { body { background: #fff; } main { grid-template-columns: repeat(2, 1fr); } article { border-color: #ccc; } }
+</style></head>
+<body>
+<header><h1>${esc(product)}</h1><p>변형 ${plan.length}개 · W ${fmtInt(r.w)} × D ${fmtInt(r.d)} × H ${fmtInt(r.h)} mm · ${new Date().toLocaleDateString('ko-KR')} · 가구 스킨 스튜디오 ${esc(VERSION)}</p></header>
+<main>
+${cards}
+</main>
+</body></html>
+`;
 }
 
 /** '사진 저장': the 3D view as it is now (as in 재질 보기), a PNG without background or helper lines. */
@@ -1338,14 +1614,15 @@ async function savePhoto() {
     const choice = g.choices.find((c) => c.id === g.active);
     return { group: g.key, def: choice ? materialById(choice.materialId) : null, color: choice?.color || null, size: activeSize(g) };
   });
-  const name = S.compare ? `${safeName(base)}_원본.png` : shown.length ? variantName(base, shown).replace(/\.glb$/, '.png') : `${safeName(base)}.png`;
+  const ext = photoExt();
+  const name = S.compare ? `${nameBase(base)}${en() ? '_original' : '_원본'}${ext}` : shown.length ? variantName(base, shown).replace(/\.glb$/, ext) : `${nameBase(base)}${ext}`;
   const target = await pickTarget('file', name);
   if (!target) return;
   const keep = { view: S.view, hover: S.hover };
   Object.assign(S, { view: 'material', hover: -1 });
   refreshStyles();
   try {
-    await saveTo(target, name, await viewer.snapshot(PHOTO));
+    await saveTo(target, name, await viewer.snapshot(photoOpts('current')));
     toast(target.file ? `‘${target.file.name}’로 저장했어요.` : '사진을 저장했어요. 다운로드 폴더를 확인하세요.');
   } catch (e) {
     console.error(e);
@@ -1783,6 +2060,7 @@ document.addEventListener('click', async (e) => {
     case 'mat-pick': {
       if (!g) break;
       const def = materialById(t.dataset.id);
+      if (!def) { toast('이 재질은 삭제되었어요.'); refreshAll(); break; }
       g.pick = def.id;
       if (def.colorMode === 'photo' && !g.choices.some((c) => c.materialId === def.id)) { addChoice(g, def.id, null); updatePreview(g); }
       else {
@@ -1829,9 +2107,21 @@ document.addEventListener('click', async (e) => {
     case 'quality':
       S.quality = t.dataset.q;
       renderExport();
+      savePrefs();
       for (const x of S.groups) updatePreview(x);
       break;
-    case 'kept-tex': S.keptTex = +t.dataset.size; renderExport(); break;
+    case 'kept-tex': S.keptTex = +t.dataset.size; renderExport(); savePrefs(); break;
+    case 'photo-angle': {
+      const a = t.dataset.angle, on = S.photo.angles.includes(a);
+      if (on && S.photo.angles.length === 1) { toast('각도는 하나 이상 골라야 해요.'); break; }
+      S.photo.angles = on ? S.photo.angles.filter((x) => x !== a) : Object.keys(PHOTO_ANGLES).filter((x) => x === a || S.photo.angles.includes(x));
+      renderExport();
+      savePrefs();
+      break;
+    }
+    case 'photo-bg': S.photo.bg = t.dataset.bg === 'white' ? 'white' : 'transparent'; renderExport(); savePrefs(); break;
+    case 'naming': S.naming = t.dataset.naming === 'en' ? 'en' : 'ko'; renderExport(); savePrefs(); break;
+    case 'open-help': $('#helpDialog').showModal(); break;
     case 'export-folder': runExport('folder'); break;
     case 'export-zip': runExport('zip'); break;
     case 'export-compress': runExport('compress'); break;
@@ -1920,11 +2210,14 @@ document.addEventListener('change', async (e) => {
   const t = e.target;
   if (t.id === 'fileInput') { openFile(t.files[0]); t.value = ''; }
   else if (t.id === 'sizeW' || t.id === 'sizeD' || t.id === 'sizeH') { applySize(); renderMaterial(); renderExport(); }
-  else if (t.id === 'compat') { S.compat = t.checked; saveWorkSoon(); }
+  else if (t.id === 'compat') { S.compat = t.checked; saveWorkSoon(); savePrefs(); }
+  else if (t.id === 'photoSize') { S.photo.size = PHOTO_SIZES[t.value] ? t.value : '1600x1200'; renderExport(); savePrefs(); }
+  else if (t.id === 'photoThumb') { S.photo.thumb = t.checked; renderExport(); savePrefs(); }
+  else if (t.id === 'catalog') { S.catalog = t.checked; renderExport(); savePrefs(); }
   else if (t.id === 'segColor') { S.segColor = t.checked; S.confirmReseg = false; renderParts(); }
   else if (t.id === 'segBase') { S.segBase = t.checked; S.confirmReseg = false; renderParts(); }
   else if (t.id === 'cutMm') setCutMm(parseFloat(t.value), 'change');
-  else if (t.id === 'photos') { S.photos = t.checked; store.setKV('prefs', { photos: S.photos }); }
+  else if (t.id === 'photos') { S.photos = t.checked; renderExport(); savePrefs(); }
   else if (t.id === 'photoInput') { loadPhoto(t.files[0]); t.value = ''; }
   else if (t.id === 'pFlatten') { photo.flatten = t.checked; schedulePhotoPreview(); }
   else if (t.name === 'pcolor') { photo.colorMode = t.value; schedulePhotoPreview(); }
@@ -1947,11 +2240,16 @@ document.addEventListener('change', async (e) => {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveWorkNow(); });
 window.addEventListener('pagehide', saveWorkNow);
 
-// keep "부분이 잘 안 나뉘었나요?" open while trying several sensitivities ('toggle' does not bubble)
-document.addEventListener('toggle', (e) => { if (e.target.matches?.('details.more')) S.moreOpen = e.target.open; }, true);
+// keep "부분이 잘 안 나뉘었나요?" and the photo settings open across redraws ('toggle' does not bubble)
+document.addEventListener('toggle', (e) => {
+  if (!e.target.matches?.('details.more')) return;
+  if (e.target.id === 'exportMore') S.exportMoreOpen = e.target.open;
+  else S.moreOpen = e.target.open;
+}, true);
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !document.querySelector('dialog[open]') && S.selection.size) { S.selection.clear(); refreshAll(); }
+  if (e.key === 'F1') { e.preventDefault(); if (!$('#helpDialog').open) $('#helpDialog').showModal(); }
   if (e.key === 'Enter' && e.target.id === 'hexInput') { e.preventDefault(); $('[data-action="hex-add"]')?.click(); }
   if (e.key === 'Enter' && e.target.id === 'sizeInput') { e.preventDefault(); $('[data-action="size-add"]')?.click(); }
   if (e.key === 'Enter' && /^size[WDH]$/.test(e.target.id)) e.target.blur();
@@ -1976,6 +2274,7 @@ bindDrop($('#photoDrop'), loadPhoto);
 
 (async () => {
   $('#version').textContent = VERSION;
+  $('#helpVersion').textContent = `버전 ${VERSION}`;
   if (embedded && !blocked.reason) {
     const note = document.createElement('p');
     note.className = 'detail';
@@ -1984,7 +2283,7 @@ bindDrop($('#photoDrop'), loadPhoto);
   }
   try {
     S.colors = await store.getKV('colors', []);
-    S.photos = (await store.getKV('prefs', {}))?.photos ?? true;
+    applyPrefs(await store.getKV('prefs', null));
     for (const m of await store.listMaterials()) addUserMaterial(m);
   } catch (e) {
     console.warn('저장된 재질을 읽지 못했어요', e);
@@ -1993,4 +2292,4 @@ bindDrop($('#photoDrop'), loadPhoto);
   refreshAll();
 })();
 
-window.__studio = { S, openFile, runExport, viewer, newGroup, addChoice, updatePreview, setActive, call, saveWorkNow, setCompare, refreshAll };
+window.__studio = { S, openFile, runExport, viewer, newGroup, addChoice, updatePreview, setActive, call, saveWorkNow, setCompare, refreshAll, savePrefs, renderExport, qcReport, variantName };
