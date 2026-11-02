@@ -33,7 +33,9 @@ const builtin = EMBED.library.materials.map((m) => ({ ...m, builtin: true }));
 const palettes = EMBED.library.palettes;
 let userMaterials = [];
 const allMaterials = () => [...builtin, ...userMaterials];
-const materialById = (id) => allMaterials().find((m) => m.id === id);
+// the model's own texture in a new colour: no texture of its own, the export recolours the original
+const ORIGINAL = Object.freeze({ id: 'original', name: '원래 질감', recolor: true, builtin: true, category: null });
+const materialById = (id) => (id === ORIGINAL.id ? ORIGINAL : allMaterials().find((m) => m.id === id));
 const getBlob = async (path) => {
   const b = files.get(path);
   if (!b) throw new Error(`텍스처 파일이 없어요: ${path}`);
@@ -656,7 +658,7 @@ function restoreWork(work) {
   S.compat = !!work.compat;
   if (work.prefix) S.prefix = work.prefix;
   const pick = activeGroup()?.pick;
-  if (pick) S.tab = materialById(pick).category;
+  if (pick) S.tab = materialById(pick)?.category || S.tab;
   for (const g of S.groups) updatePreview(g);
   S.resumed = { saved: work.saved };
   return { groups: S.groups.length, variants: variantPlan().count, dropped };
@@ -753,7 +755,15 @@ async function updatePreview(g) {
     return;
   }
   try {
-    if (choice) {
+    if (choice && materialById(choice.materialId)?.recolor) {
+      // the parts' own triangles and texture (resized when a size is chosen), in the new colour
+      const st = size ? stretchFor(groupBox(g), S.axes, size) : null;
+      const orig = await groupOriginal(g);
+      if (token !== g.token || !S.groups.includes(g)) return;
+      viewer.setResizedOriginal(g.key, g.parts, (P, N) => { if (st) stretchGeometry(P, N, st); },
+        JSON.stringify([S.segKey, g.parts, currentXf(), size?.w ?? null, size?.d ?? null]), g.parts[0]);
+      viewer.setRecolor(g.key, recolorFor(choice.color?.hex, orig));
+    } else if (choice) {
       const def = materialById(choice.materialId);
       const [geo, mat] = await Promise.all([previewGeo(g, size), makeThreeMaterial(def, choice.color, getBlob, viewer.maxAnisotropy())]);
       if (token !== g.token || !S.groups.includes(g)) { mat.dispose(); return; }
@@ -763,6 +773,7 @@ async function updatePreview(g) {
       // original look, resized: done on the screen side from the loaded model
       const st = stretchFor(groupBox(g), S.axes, size);
       viewer.setResizedOriginal(g.key, g.parts, (P, N) => stretchGeometry(P, N, st), JSON.stringify([S.segKey, g.parts, currentXf(), size.w, size.d]), g.parts[0]);
+      viewer.setRecolor(g.key, null);
     }
     g.skinShown = true;
     refreshStyles();
@@ -775,9 +786,29 @@ async function updatePreview(g) {
 function refreshUVs() {
   for (const g of S.groups) {
     const choice = g.choices.find((c) => c.id === g.active);
-    if (!choice || !g.skinShown) continue;
+    if (!choice || !g.skinShown || materialById(choice.materialId)?.recolor) continue;
     previewGeo(g, activeSize(g)).then((geo) => viewer.setSkinUV(g.key, tileUV(geo.uv, materialById(choice.materialId), g.rotate)));
   }
+}
+
+/**
+ * The group's look in the model's own texture: { hex (average colour), lum (average linear
+ * brightness) }, or null when the model has no colour texture. Asked once per parts set.
+ */
+async function groupOriginal(g) {
+  const key = JSON.stringify([S.segKey, g.parts]);
+  if (g.orig?.key !== key) g.orig = { key, info: call('groupColor', { parts: g.parts }).catch(() => null) };
+  return g.orig.info;
+}
+
+/** How the screen recolours the original texture into hex (same formula as the export). */
+function recolorFor(hex, orig) {
+  if (!hex) return null;
+  const h = hex.replace('#', '');
+  const lin = [0, 2, 4].map((i) => { const c = parseInt(h.slice(i, i + 2), 16) / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+  if (!orig) return { flat: lin };
+  const f = lin.map((c) => c / Math.max(orig.lum, 1e-4));
+  return viewer.lookIsGlow() ? { emissive: f } : { map: f };
 }
 
 function addChoice(g, materialId, color) {
@@ -938,6 +969,7 @@ function colorArea(m, g) {
   const pal = palettes[m.palette] || [];
   return `<div class="sub-head"><span class="label">${esc(m.name)}의 색 · 여러 개 고를 수 있어요</span>${edit}
       <a class="note" href="https://encycolorpedia.com/" target="_blank" rel="noopener">encycolorpedia ↗</a></div>
+    ${m.recolor ? '<p class="hint">질감은 3D 모델에 있던 그대로예요. 밝고 어두운 무늬는 남기고 색만 새 색으로 바꿔요. <span data-orig-color></span></p>' : ''}
     <div class="input-row"><input class="input mono" id="hexInput" placeholder="#8B4A22, #1D1C1B" autocomplete="off" spellcheck="false">
       <button class="btn small" type="button" data-action="hex-add">추가</button></div>
     ${S.colors.length ? `<span class="label">저장한 색</span><div class="colors">${S.colors.map((c) => colorChip(c, isOn(c.hex))).join('')}</div>` : ''}
@@ -961,6 +993,7 @@ function renderMaterial() {
   el.innerHTML = `${head(3, '질감과 색', `<span class="dot-badge" style="background:${g.color}"></span>`)}
     <div class="field"><label for="groupName">그룹 이름 <span class="note">(파일 이름에 들어가요)</span></label>
       <input class="input" id="groupName" value="${esc(g.name)}" maxlength="24"></div>
+    ${origCard(g)}
     <div class="tabs" role="tablist">${tabs.map((t) => `<button type="button" role="tab" aria-selected="${t === S.tab}" data-action="tab" data-tab="${t}" class="${t === S.tab ? 'on' : ''}">${t}</button>`).join('')}</div>
     <div class="mats">${mats.map((m) => matCard(m, g)).join('')}${photoKind ? `
       <button class="mat add" type="button" data-action="photo-open" data-kind="${photoKind}"><span class="plus">＋</span>사진으로<br>${S.tab} 만들기</button>` : ''}</div>
@@ -978,7 +1011,25 @@ function renderMaterial() {
       </div></div>
     ${sizeArea(g)}`;
   hydrateSwatches(el);
+  // the group's colour in the model's own texture comes from the worker: fill it in when known
+  groupOriginal(g).then((o) => {
+    if (activeGroup() !== g || !o?.hex) return;
+    const img = el.querySelector('img[data-orig-swatch]');
+    if (img && !img.dataset.swatch) { img.dataset.swatch = `${ORIGINAL.id}|${o.hex}`; hydrateSwatches(img.parentElement); }
+    const note = el.querySelector('[data-orig-color]');
+    if (note) note.innerHTML = `지금 색 <i class="dot" style="background:${o.hex}"></i><span class="mono">${o.hex}</span>`;
+  });
   saveWorkSoon();
+}
+
+/** "Keep the model's own texture, change only its colour": a wide card above the texture tabs. */
+function origCard(g) {
+  const count = g.choices.filter((c) => c.materialId === ORIGINAL.id).length;
+  const first = g.choices.find((c) => c.materialId === ORIGINAL.id && c.color);
+  return `<button class="mat orig ${g.pick === ORIGINAL.id ? 'on' : ''}" type="button" data-action="mat-pick" data-id="${ORIGINAL.id}">
+    <img ${first ? `data-swatch="${ORIGINAL.id}|${first.color.hex}"` : 'data-orig-swatch'} alt="">
+    <span class="cap"><b>원래 질감 그대로 · 색만 바꾸기</b><small>모델에 있던 결·주름·그림자는 두고 색만 바꿔요</small></span>
+    ${count ? `<span class="count">${count}</span>` : ''}</button>`;
 }
 
 /** Order sizes for one part (a table top in 1600, 1800, 2000 ...): each size is a variant. */

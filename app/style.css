@@ -205,6 +205,10 @@ details.more[open] summary { margin-bottom: 8px; }
 .mat-del:hover { color: var(--danger); border-color: var(--danger); }
 .mat-edit:hover { color: var(--accent); border-color: var(--accent); }
 @media (hover: none) { .mat-del, .mat-edit { opacity: 1; } }
+.mat.orig { grid-template-columns: 52px minmax(0, 1fr); align-items: center; width: 100%; margin-bottom: 8px; }
+.mat.orig img { width: 52px; height: 52px; aspect-ratio: auto; }
+.mat.orig .cap b { white-space: normal; }
+.hint .dot { display: inline-block; width: 11px; height: 11px; border-radius: 3px; vertical-align: -1px; margin: 0 3px 0 2px; border: 1px solid var(--line); }
 .mat.add { border-style: dashed; place-items: center; color: var(--muted); min-height: 100%; aspect-ratio: auto; padding: 10px; text-align: center; font-size: 12.5px; gap: 4px; }
 .mat.add .plus { font-size: 22px; line-height: 1; color: var(--accent); }
 .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }

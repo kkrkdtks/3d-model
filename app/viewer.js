@@ -24,6 +24,37 @@ function shadowTexture() {
   return t;
 }
 
+/**
+ * The model's own material in a new colour, for "original texture, new colour".
+ * rec: { map | emissive: [r, g, b] } scales the texture's brightness (linear luminance) into the
+ * colour, capped at 1, exactly like the export (worker recolorTexture); { flat: [r, g, b] } is a
+ * plain colour for models without a texture.
+ */
+export function recolorMaterial(base, rec) {
+  const m = base.clone();
+  if (rec.flat) { m.map = null; m.color.setRGB(...rec.flat, THREE.LinearSRGBColorSpace); m.needsUpdate = true; return m; }
+  const fm = rec.map || [1, 1, 1], fe = rec.emissive || [1, 1, 1];
+  if (rec.map) m.color.setRGB(1, 1, 1);
+  if (rec.emissive) m.emissive.setRGB(1, 1, 1);
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.recolorMap = { value: new THREE.Vector3(...fm) };
+    shader.uniforms.recolorEmissive = { value: new THREE.Vector3(...fe) };
+    const LUM = 'vec3( 0.2126, 0.7152, 0.0722 )';
+    shader.fragmentShader = `uniform vec3 recolorMap;\nuniform vec3 recolorEmissive;\n${shader.fragmentShader}`
+      .replace('#include <map_fragment>', `#ifdef USE_MAP
+        vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+        diffuseColor *= vec4( min( recolorMap * dot( sampledDiffuseColor.rgb, ${LUM} ), vec3( 1.0 ) ), sampledDiffuseColor.a );
+      #endif`)
+      .replace('#include <emissivemap_fragment>', `#ifdef USE_EMISSIVEMAP
+        vec4 emissiveColor = texture2D( emissiveMap, vEmissiveMapUv );
+        totalEmissiveRadiance *= min( recolorEmissive * dot( emissiveColor.rgb, ${LUM} ), vec3( 1.0 ) );
+      #endif`);
+  };
+  m.customProgramCacheKey = () => `recolor|${!!rec.map}|${!!rec.emissive}`;
+  m.needsUpdate = true;
+  return m;
+}
+
 /** Triangle index reordered so each part's triangles are contiguous; returns index + draw groups. */
 function sortByPart(index, faceLabels, partCount) {
   const count = new Uint32Array(partCount + 1);
@@ -491,6 +522,25 @@ export class Viewer {
     return mesh;
   }
 
+  /** True for "shaded" exports: no colour texture, the look is in the glow (emissive) texture. */
+  lookIsGlow() {
+    const m = this.baseMaterial;
+    return !!m && !m.map && !!m.emissiveMap && Math.max(m.emissive.r, m.emissive.g, m.emissive.b) > 0;
+  }
+
+  /** Give a shown group the model's own texture in a new colour (rec: see recolorMaterial), or back its own look (null). */
+  setRecolor(key, rec) {
+    const mesh = this.skins.get(key);
+    if (!mesh) return;
+    const sig = rec ? JSON.stringify(rec) : '';
+    if ((mesh.userData.recolor || '') === sig) return;
+    const prev = mesh.material;
+    mesh.material = rec ? recolorMaterial(this.baseMaterial, rec) : this.baseMaterial.clone();
+    mesh.userData.recolor = sig;
+    prev.dispose();
+    this.dirty = true;
+  }
+
   setSkinUV(key, uv) {
     const mesh = this.skins.get(key);
     if (!mesh) return;
@@ -502,7 +552,8 @@ export class Viewer {
   /** Soft glow on a re-skinned group while the mouse is over it. */
   setSkinHighlight(key, on) {
     const mesh = this.skins.get(key);
-    if (!mesh || !mesh.material?.emissive) return;
+    // a glow texture carries the look of "shaded" exports: leave it alone
+    if (!mesh || !mesh.material?.emissive || mesh.material.emissiveMap) return;
     const want = on ? 0.07 : 0;
     if (mesh.material.emissive.r !== want) {
       mesh.material.emissive.setRGB(want, want * 0.8, want * 0.6);
