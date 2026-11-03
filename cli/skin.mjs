@@ -195,7 +195,7 @@ async function cmdRun(jobPath) {
     let name = `${path.basename(input, '.glb')}__${labels.join('__')}.glb`;
     for (let i = 2; used.has(name); i++) name = name.replace(/(-\d+)?\.glb$/, `-${i}.glb`);
     used.add(name);
-    const bytes = await encodeVariant(io, doc, { liftM: Math.max(0, job.liftMm ?? 10) / 1000 });
+    const bytes = await encodeVariant(io, doc, { liftM: Math.min(20, Math.max(0, job.liftMm ?? 10)) / 1000 /* 공간무드 hides furniture 30 mm up */ });
     await fs.writeFile(path.join(outDir, name), bytes);
     console.log(`  ${name}  ${mb(bytes.byteLength)}`);
     results.push({
