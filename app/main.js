@@ -69,7 +69,8 @@ const THUMB_PX = 480;
 // what to point out about a written file (marketplace rules; 공간무드 itself sets no limit)
 const QC_LIMITS = { triangles: 200000, bytes: 15 * 1048576, texture: 4096 };
 // settings kept on this PC for every model (a model's own saved work may override the first three)
-const PREF_KEYS = ['quality', 'keptTex', 'compat', 'photos', 'photo', 'catalog', 'naming'];
+const PREF_KEYS = ['quality', 'keptTex', 'compat', 'photos', 'photo', 'catalog', 'naming', 'liftMm'];
+const LIFT_DEFAULT = 10, LIFT_MAX = 100; // mm above the floor in saved files
 
 // ---------- state ----------
 
@@ -86,6 +87,8 @@ const S = {
   photo: { angles: ['current'], bg: 'transparent', size: '1600x1200', thumb: false }, catalog: true,
   // file names: 'ko' as the groups and materials are called, 'en' letters and digits only (web services, marketplaces)
   naming: 'ko',
+  // saved files stand this far above the floor (mm), so an uneven room floor or a rug does not hide the legs
+  liftMm: 10,
   colors: [], results: [], resultNote: '', exporting: false, confirmReseg: false, moreOpen: false, exportMoreOpen: false,
   workKey: null, resumed: null,
 };
@@ -236,6 +239,7 @@ function applyPrefs(p) {
   if (p.photo) S.photo = normalizePhoto(p.photo);
   if (typeof p.catalog === 'boolean') S.catalog = p.catalog;
   if (p.naming === 'en' || p.naming === 'ko') S.naming = p.naming;
+  if (Number.isFinite(p.liftMm) && p.liftMm >= 0 && p.liftMm <= LIFT_MAX) S.liftMm = p.liftMm;
 }
 
 function savePrefs() {
@@ -691,7 +695,7 @@ function restoreWork(work) {
     S.groups.push({
       key: uid('g'), name: w.name || `그룹 ${S.groups.length + 1}`, parts: parts.sort((a, b) => a - b),
       color: w.color || GROUP_COLORS[S.groups.length % GROUP_COLORS.length],
-      choices, active: active || choices[choices.length - 1]?.id || null, rotate: w.rotate === 90 ? 90 : 0,
+      choices, active: active || choices[choices.length - 1]?.id || null, rotate: clampDeg(w.rotate),
       skinShown: false, token: 0, pick: materialById(w.pick) ? w.pick : null, sizes, activeSize: sizes[w.activeSize]?.id || null,
     });
   }
@@ -827,12 +831,31 @@ async function updatePreview(g) {
   }
 }
 
-function refreshUVs() {
-  for (const g of S.groups) {
+function refreshUVs(only = null) {
+  for (const g of only ? [only] : S.groups) {
     const choice = g.choices.find((c) => c.id === g.active);
     if (!choice || !g.skinShown || materialById(choice.materialId)?.recolor) continue;
     previewGeo(g, activeSize(g)).then((geo) => viewer.setSkinUV(g.key, tileUV(geo.uv, materialById(choice.materialId), g.rotate)));
   }
+}
+
+/** Height above the floor of saved files (mm, 0..LIFT_MAX, 0.5 mm steps); remembered with the other export settings. */
+function setLift(v) {
+  if (!Number.isFinite(v)) return;
+  S.liftMm = Math.round(Math.max(0, Math.min(LIFT_MAX, v)) * 2) / 2;
+  savePrefs();
+}
+
+/** Pattern direction of a group in degrees (-180..180), kept in step between the slider, the number and the quick buttons. */
+const clampDeg = (v) => (Number.isFinite(+v) ? Math.max(-180, Math.min(180, Math.round(+v))) : 0);
+function setPatternAngle(g, deg, from = null) {
+  g.rotate = clampDeg(deg);
+  const range = $('#rotRange'), num = $('#rotNum');
+  if (range && from !== 'range') range.value = g.rotate;
+  if (num && from !== 'num') num.value = g.rotate;
+  for (const b of document.querySelectorAll('[data-action="rotate"]')) b.classList.toggle('on', +b.dataset.rot === g.rotate);
+  refreshUVs(g);
+  saveWorkSoon();
 }
 
 /**
@@ -1042,6 +1065,8 @@ function renderMaterial() {
   const mats = allMaterials().filter((m) => m.category === S.tab);
   const picked = g.pick ? materialById(g.pick) : null;
   const photoKind = PHOTO_TABS[S.tab];
+  // a pattern has a direction; the model's own texture recoloured has not
+  const directional = (picked && !picked.recolor) || g.choices.some((c) => !materialById(c.materialId)?.recolor);
   el.innerHTML = `${head(3, '질감과 색', `<span class="dot-badge" style="background:${g.color}"></span>`)}
     <div class="field"><label for="groupName">그룹 이름 <span class="note">(파일 이름에 들어가요)</span></label>
       <input class="input" id="groupName" value="${esc(g.name)}" maxlength="24"></div>
@@ -1056,11 +1081,16 @@ function renderMaterial() {
       <span class="choice ${c.id === g.active ? 'on' : ''}" data-action="choice-preview" data-id="${c.id}" title="${esc(choiceLabel(c))}">
         <img data-swatch="${esc(c.materialId)}|${c.color?.hex || ''}" alt=""><span>${esc(choiceLabel(c))}</span>
         <button class="x" type="button" data-action="choice-remove" data-id="${c.id}" aria-label="빼기">×</button></span>`).join('') || '<span class="note">아직 없어요. 질감과 색을 고르면 여기에 쌓여요.</span>'}</div>
-    <div class="field"><span class="label">무늬 방향</span>
-      <div class="seg flat" role="group">
-        <button type="button" data-action="rotate" data-rot="0" class="${g.rotate === 0 ? 'on' : ''}">기본</button>
-        <button type="button" data-action="rotate" data-rot="90" class="${g.rotate === 90 ? 'on' : ''}">90° 돌리기</button>
-      </div></div>
+    ${directional ? `<div class="field"><span class="label">무늬 방향 <span class="note">(이 부분에서 결이 흐르는 방향)</span></span>
+      <div class="rot-row">
+        <div class="seg flat" role="group">
+          <button type="button" data-action="rotate" data-rot="0" class="${g.rotate === 0 ? 'on' : ''}">기본</button>
+          <button type="button" data-action="rotate" data-rot="90" class="${g.rotate === 90 ? 'on' : ''}">90°</button>
+        </div>
+        <input type="range" id="rotRange" min="-180" max="180" step="1" value="${g.rotate}" aria-label="무늬 방향 (도)">
+        <span class="input-row"><input class="input num short" id="rotNum" inputmode="numeric" value="${g.rotate}" aria-label="무늬 방향 각도"><span class="unit">°</span></span>
+      </div>
+      <span class="note">밀면 3D 화면에 바로 보여요. 사진 재질의 결이 비스듬하면 그 재질의 ‘수정’에서 ‘무늬 바로잡기’로 먼저 세우세요.</span></div>` : ''}
     ${sizeArea(g)}`;
   hydrateSwatches(el);
   // the group's colour in the model's own texture comes from the worker: fill it in when known
@@ -1140,7 +1170,7 @@ function renderExport() {
     <div class="summary">${count ? `변형 ${count}개를 만들어요` : '아직 고른 재질이 없어요'}
       <small>${count ? `${active.map((g) => `${esc(g.name)} ${per(g)}`).join(' × ')}${S.groups.length > active.length ? ' · 고르지 않은 그룹은 원본 그대로' : ''}` : '재질이나 크기를 고르면 조합마다 GLB 파일이 하나씩 만들어져요.'}</small></div>
     ${needH ? '<p class="warn-text">1번에 실제 높이(H)를 넣어야 저장할 수 있어요.</p>'
-      : `<p class="note">저장 크기 W ${fmtInt(r.w)} × D ${fmtInt(r.d)} × H ${fmtInt(r.h)}mm${S.groups.some((x) => x.sizes.length) ? ' (크기를 바꾼 부분은 변형마다 그 크기로)' : ''} · 미터 단위, 바닥 가운데 기준</p>`}
+      : `<p class="note">저장 크기 W ${fmtInt(r.w)} × D ${fmtInt(r.d)} × H ${fmtInt(r.h)}mm${S.groups.some((x) => x.sizes.length) ? ' (크기를 바꾼 부분은 변형마다 그 크기로)' : ''} · 미터 단위, 바닥 가운데 기준${S.liftMm ? ` · 바닥에서 ${fmtInt(S.liftMm)}mm 띄움` : ''}</p>`}
     ${count > 40 ? `<p class="warn-text">파일이 ${count}개예요. 시간이 꽤 걸릴 수 있어요.</p>` : ''}
     <div class="field"><span class="label">압축</span>
       <div class="seg flat" role="group">${Object.entries(QUALITY).map(([k, v]) => `<button type="button" data-action="quality" data-q="${k}" class="${k === S.quality ? 'on' : ''}">${v.label}</button>`).join('')}</div>
@@ -1152,6 +1182,10 @@ function renderExport() {
       </div></div>
     <label class="check"><input type="checkbox" id="photos" ${S.photos ? 'checked' : ''}>
       <span>제품 사진도 같이 저장<small>변형마다 ${photoSummary()}. 폴더나 ZIP에는 변형 목록(엑셀용 CSV, 웹 등록용 JSON)${S.catalog ? '과 카탈로그 HTML' : ''}도 같이 들어가요.</small></span></label>
+    <div class="field"><label for="liftMm">바닥에서 띄우기</label>
+      <div class="input-row"><input class="input num short" id="liftMm" inputmode="decimal" value="${S.liftMm}"><span class="unit">mm</span>
+        ${S.liftMm !== LIFT_DEFAULT ? `<button class="link" type="button" data-action="lift-default">${LIFT_DEFAULT}mm로</button>` : ''}</div>
+      <span class="note">공간에 놓았을 때 바닥이 고르지 않거나 러그를 깔아도 다리가 묻히지 않게 살짝 띄워요. 0이면 바닥에 딱 붙어요. 치수(H)는 그대로예요.</span></div>
     <label class="check"><input type="checkbox" id="compat" ${S.compat ? 'checked' : ''}>
       <span>호환 모드<small>파일이 공간무드나 다른 프로그램에서 안 열릴 때, 또는 텍스처를 JPG로 요구하는 마켓(아마존 등)에 올릴 때 켜세요. 용량이 2~3배 커져요.</small></span></label>
     <div class="field"><label for="prefix">파일 이름 앞부분</label><input class="input" id="prefix" value="${esc(S.prefix)}" spellcheck="false">
@@ -1410,7 +1444,7 @@ async function runExport(kind) {
     const res = await call('export', {
       names, xf: currentXf(), axes: S.axes,
       quality: { simplify: q.simplify, keepSimplify: q.keepSimplify }, keptTextureSize: S.keptTex,
-      meshopt: !S.compat, compat: S.compat, groups, variants, textures,
+      meshopt: !S.compat, compat: S.compat, liftMm: S.liftMm, groups, variants, textures,
     }, {
       onProgress: (p) => busy(p.text, p.frac),
       onFile: (f) => {
@@ -1509,8 +1543,9 @@ function variantCsv(plan, names, photoFiles, made) {
       if (g.sizes.length) row.push(size ? sizeLabel(size, groupSizeMm(g)) : '');
     }
     const qc = f?.qc;
+    const dirs = combo.filter(({ g, choice }) => g.rotate && choice && !materialById(choice.materialId)?.recolor).map(({ g }) => `${g.name} 무늬 ${g.rotate}°`);
     row.push(f ? (f.size / 1048576).toFixed(1) : '', qc?.triangles ?? '', qc?.images?.length ?? '', qc?.images?.length ? Math.max(...qc.images.map((im) => Math.max(im.width, im.height))) : '',
-      !qc ? '' : q.status === 'error' ? `오류 ${q.errors}개` : q.status === 'warn' ? '검사 못 함' : '통과', q.notes.join(' / '));
+      !qc ? '' : q.status === 'error' ? `오류 ${q.errors}개` : q.status === 'warn' ? '검사 못 함' : '통과', [...dirs, ...q.notes].join(' / '));
     return row;
   });
   const cell = (v) => { const s = String(v ?? ''); return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
@@ -1525,7 +1560,7 @@ function variantJson(plan, names, photoFiles, made) {
   const data = {
     generator: `가구 스킨 스튜디오 ${VERSION}`, created: new Date().toISOString(), product: S.prefix || S.file.base,
     source: { file: S.file.name, bytes: S.file.size },
-    units: 'm', up: '+Y', origin: 'floor-center', sizeMm: { w: mm(r.w), d: mm(r.d), h: mm(r.h) },
+    units: 'm', up: '+Y', origin: 'floor-center', floorGapMm: S.liftMm, sizeMm: { w: mm(r.w), d: mm(r.d), h: mm(r.h) },
     groups: groups.map((g, i) => ({ index: i + 1, name: g.name, parts: g.parts.length })),
     variants: plan.map((combo, i) => {
       const f = made[i], q = qcReport(f?.qc), qc = f?.qc;
@@ -1536,8 +1571,9 @@ function variantJson(plan, names, photoFiles, made) {
         groups: combo.map(({ g, choice, size }) => {
           const def = choice ? materialById(choice.materialId) : null, c = choice?.color;
           return {
-            name: g.name, material: def ? { id: def.id, name: def.name, category: def.category || null } : null,
+            name: g.name, material: def ? { id: def.id, name: def.name, category: def.category || null, ...(def.rotate ? { rotate: def.rotate } : {}) } : null,
             color: c ? { name: c.name && c.name !== c.hex ? c.name : null, hex: c.hex } : null,
+            patternDeg: def && !def.recolor ? g.rotate || 0 : null,
             sizeMm: size ? { w: size.w, d: size.d ?? null } : null,
           };
         }),
@@ -1639,7 +1675,7 @@ async function savePhoto() {
 // made before the photo itself was kept; then only size, bump, gloss and name can change.
 const photo = {
   bitmap: null, kind: 'marble', colorMode: 'photo', widthCm: 60, overlap: 0.2, flatten: true, bump: 0.2, gloss: 0.85,
-  contrast: 1, res: 2048, name: '', size: null, editId: null, legacyOut: null,
+  contrast: 1, res: 2048, rotate: 0, name: '', size: null, editId: null, legacyOut: null,
 };
 let photoTimer = 0, photoSeq = 0;
 let photoProcessed = null; // last processed preview: bump and gloss changes only re-light it
@@ -1654,7 +1690,7 @@ function resetPhotoSource() {
 function openPhotoDialog(kind) {
   const k = KINDS[kind] || KINDS.other;
   resetPhotoSource();
-  Object.assign(photo, { editId: null, kind, colorMode: k.colorMode, widthCm: k.widthCm, bump: k.bump, gloss: k.gloss, contrast: k.contrast, overlap: 0.2, flatten: true, res: k.colorMode === 'photo' ? 2048 : 1024 });
+  Object.assign(photo, { editId: null, kind, colorMode: k.colorMode, widthCm: k.widthCm, bump: k.bump, gloss: k.gloss, contrast: k.contrast, overlap: 0.2, flatten: true, rotate: 0, res: k.colorMode === 'photo' ? 2048 : 1024 });
   photo.name = `${k.label} ${userMaterials.filter((m) => m.kind === kind).length + 1}`;
   showPhotoDialog();
 }
@@ -1672,7 +1708,7 @@ async function openEditDialog(id) {
     bump: made.bump ?? def.normalScale ?? k.bump,
     gloss: made.gloss ?? +Math.min(1, Math.max(0, (0.92 - (def.roughness ?? 0.6)) / 0.8)).toFixed(2),
     contrast: made.contrast ?? k.contrast, overlap: made.overlap ?? 0.2, flatten: made.flatten ?? true,
-    res: made.res ?? (def.colorMode === 'photo' ? 2048 : 1024),
+    rotate: clampDeg(def.rotate), res: made.res ?? (def.colorMode === 'photo' ? 2048 : 1024),
   });
   try {
     const src = files.get(`${id}/source.jpg`);
@@ -1732,6 +1768,9 @@ function renderPhotoFields() {
       <label class="check"><input type="radio" name="pcolor" value="tint" ${photo.colorMode === 'tint' ? 'checked' : ''} ${lockKind}><span>질감만 쓰고 색은 hex로<small>거래처 원단·가죽 사진을 여러 색으로 쓸 때</small></span></label></div>
     <div class="field"><label for="pWidth">사진 가로의 실제 크기</label>
       <div class="input-row"><input class="input num" id="pWidth" inputmode="decimal" value="${photo.widthCm}"><span class="unit">cm</span><span class="note">${dims}</span></div></div>
+    <div class="field"><label for="pRotate">무늬 바로잡기 <span class="note">(사진 속 결이 비스듬할 때)</span></label>
+      <div class="range-row"><input type="range" id="pRotate" min="-90" max="90" step="1" value="${photo.rotate}"><span class="note mono" id="pRotateVal">${photo.rotate}°</span><button class="link" type="button" data-action="photo-rotate-reset" ${photo.rotate ? '' : 'hidden'}>0°로</button></div>
+      <span class="note">왼쪽 미리보기에서 결이 가로로 똑바로 흐르게 맞춰 두면, 이 재질을 쓰는 모든 부분에 그대로 적용돼요. 부분마다 결 방향은 3번의 ‘무늬 방향’에서 다시 돌릴 수 있어요.</span></div>
     <div class="field"><label for="pContrast">무늬 진하기</label>
       <div class="range-row"><span class="note">연하게</span><input type="range" id="pContrast" min="0.1" max="1.5" step="0.05" value="${photo.contrast}" ${lockPhoto}><span class="note">진하게</span></div>
       <span class="note">사진 속 얼룩과 명암을 얼마나 살릴지예요. 가죽·원단은 연하게 시작해요.</span></div>
@@ -1778,7 +1817,7 @@ async function drawPhotoPreview() {
   const w = tw * s, h = th * s, ox = (canvas.width - 2 * w) / 2, oy = (canvas.height - 2 * h) / 2;
   g.clearRect(0, 0, canvas.width, canvas.height);
   const tint = photo.colorMode === 'tint' ? EXAMPLE_TINT[photo.kind] || EXAMPLE_TINT.fabric : null;
-  drawLitTiles(g, out, { tint, bump: photo.bump, gloss: photo.gloss }, ox, oy, 2 * w, 2 * h);
+  drawLitTiles(g, out, { tint, bump: photo.bump, gloss: photo.gloss, rotate: photo.rotate }, ox, oy, 2 * w, 2 * h);
   drawRuler(g, rulerFor(w, +photo.widthCm || KINDS[photo.kind].widthCm), ox + 14, oy + 2 * h - 14);
   $('#photoStatus').textContent = photo.colorMode === 'tint' ? '미리보기는 예시 색으로 칠했어요. 실제 색은 hex로 골라요.' : '';
 }
@@ -1859,6 +1898,7 @@ async function savePhotoMaterial(asCopy = false) {
       ...(photo.colorMode === 'tint' ? { palette: photo.kind === 'leather' ? 'leather' : 'fabric' } : {}),
       colorMode: photo.colorMode, tileCm: widthCm, tileHeightCm: +(widthCm * aspect).toFixed(2),
       roughness: surf.roughness, metallic: 0, normalScale: +photo.bump.toFixed(2),
+      ...(photo.rotate ? { rotate: clampDeg(photo.rotate) } : {}),
       ...(surf.clearcoat ? { clearcoat: surf.clearcoat } : {}),
       ...(k.sheen ? { sheen: { intensity: 0.5, roughness: 0.55 } } : {}),
       maps: { baseColor: `${id}/albedo.webp`, normal: `${id}/normal.webp`, orm: `${id}/orm.webp` },
@@ -2103,7 +2143,9 @@ document.addEventListener('click', async (e) => {
     case 'choice-preview': if (g) { g.active = t.dataset.id; updatePreview(g); renderMaterial(); } break;
     case 'choice-remove': e.stopPropagation(); if (g) { removeChoice(g, t.dataset.id); updatePreview(g); refreshAll(); } break;
     case 'choices-clear': if (g) { g.choices = []; g.active = null; updatePreview(g); refreshAll(); } break;
-    case 'rotate': if (g) { g.rotate = +t.dataset.rot; refreshUVs(); renderMaterial(); } break;
+    case 'rotate': if (g) setPatternAngle(g, +t.dataset.rot); break;
+    case 'photo-rotate-reset': photo.rotate = 0; renderPhotoFields(); drawPhotoPreview(); break;
+    case 'lift-default': setLift(LIFT_DEFAULT); renderExport(); break;
     case 'quality':
       S.quality = t.dataset.q;
       renderExport();
@@ -2198,6 +2240,14 @@ document.addEventListener('input', (e) => {
   else if (t.dataset.colorName !== undefined) {
     const c = S.colors[+t.dataset.colorName];
     if (c) { c.name = t.value.trim() || c.hex; clearTimeout(t._t); t._t = setTimeout(() => { saveColors(); renderMaterial(); }, 400); }
+  } else if (t.id === 'rotRange') { const g = activeGroup(); if (g) setPatternAngle(g, +t.value, 'range'); }
+  else if (t.id === 'rotNum') { const g = activeGroup(), v = parseInt(t.value, 10); if (g && Number.isFinite(v)) setPatternAngle(g, v, 'num'); }
+  else if (t.id === 'pRotate') {
+    photo.rotate = clampDeg(t.value);
+    const val = $('#pRotateVal'), reset = $('[data-action="photo-rotate-reset"]');
+    if (val) val.textContent = `${photo.rotate}°`;
+    if (reset) reset.hidden = !photo.rotate;
+    schedulePhotoPreview();
   } else if (t.id === 'pWidth') { photo.widthCm = parseFloat(t.value) || photo.widthCm; schedulePhotoPreview(); }
   else if (t.id === 'pOverlap') { photo.overlap = +t.value; t.nextElementSibling.textContent = `${Math.round(photo.overlap * 100)}%`; schedulePhotoPreview(); }
   else if (t.id === 'pContrast') { photo.contrast = +t.value; schedulePhotoPreview(); }
@@ -2211,6 +2261,8 @@ document.addEventListener('change', async (e) => {
   if (t.id === 'fileInput') { openFile(t.files[0]); t.value = ''; }
   else if (t.id === 'sizeW' || t.id === 'sizeD' || t.id === 'sizeH') { applySize(); renderMaterial(); renderExport(); }
   else if (t.id === 'compat') { S.compat = t.checked; saveWorkSoon(); savePrefs(); }
+  else if (t.id === 'rotNum') { const g = activeGroup(); if (g) t.value = g.rotate; } // show the angle actually used (-180..180)
+  else if (t.id === 'liftMm') { setLift(parseFloat(String(t.value).replace(',', '.'))); renderExport(); }
   else if (t.id === 'photoSize') { S.photo.size = PHOTO_SIZES[t.value] ? t.value : '1600x1200'; renderExport(); savePrefs(); }
   else if (t.id === 'photoThumb') { S.photo.thumb = t.checked; renderExport(); savePrefs(); }
   else if (t.id === 'catalog') { S.catalog = t.checked; renderExport(); savePrefs(); }
@@ -2292,4 +2344,4 @@ bindDrop($('#photoDrop'), loadPhoto);
   refreshAll();
 })();
 
-window.__studio = { S, openFile, runExport, viewer, newGroup, addChoice, updatePreview, setActive, call, saveWorkNow, setCompare, refreshAll, savePrefs, renderExport, qcReport, variantName };
+window.__studio = { S, openFile, runExport, viewer, newGroup, addChoice, updatePreview, setActive, call, saveWorkNow, setCompare, refreshAll, savePrefs, renderExport, qcReport, variantName, materialById, setPatternAngle, openEditDialog, savePhotoMaterial, tileUV };

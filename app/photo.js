@@ -201,7 +201,7 @@ const pixelsOf = (canvas) => canvas.getContext('2d').getImageData(0, 0, canvas.w
  * Lit 2×2 tiling of a processed photo, so bump and gloss can be judged before saving.
  * tint: sRGB hex used for hex-tinted materials (an example colour). Draws into ctx at (x, y, w, h).
  */
-export function drawLitTiles(ctx, out, { tint = null, bump = 1, gloss = 0.3 }, x0, y0, w, h) {
+export function drawLitTiles(ctx, out, { tint = null, bump = 1, gloss = 0.3, rotate = 0 }, x0, y0, w, h) {
   const tw = out.width, th = out.height;
   const alb = pixelsOf(out.albedo), nrm = pixelsOf(out.normal);
   const img = ctx.createImageData(Math.round(w), Math.round(h));
@@ -210,11 +210,18 @@ export function drawLitTiles(ctx, out, { tint = null, bump = 1, gloss = 0.3 }, x
   const L = [-0.5, 0.62, 0.6], ll = Math.hypot(...L);
   const Hv = [L[0] / ll, L[1] / ll, L[2] / ll + 1], hl = Math.hypot(...Hv);
   const shin = 8 + 140 * gloss, ks = 0.03 + 0.35 * gloss;
+  // the pattern turned by `rotate` degrees about the centre: the same turn tileUV gives it on the model
+  const rad = (rotate * Math.PI) / 180, cr = Math.cos(rad), sr = Math.sin(rad), cx = W / 2, cy = Hh / 2;
+  const wrap = (v, n) => ((v % n) + n) % n;
   for (let y = 0; y < Hh; y++)
     for (let x = 0; x < W; x++) {
-      const sx = Math.floor(((x / W) * 2 * tw) % tw), sy = Math.floor(((y / Hh) * 2 * th) % th);
+      const px = x - cx, py = y - cy;
+      const rx = cr * px + sr * py + cx, ry = -sr * px + cr * py + cy;
+      const sx = wrap(Math.floor((rx / W) * 2 * tw), tw), sy = wrap(Math.floor((ry / Hh) * 2 * th), th);
       const si = (sy * tw + sx) * 4, di = (y * W + x) * 4;
-      let nx = ((nrm[si] / 255) * 2 - 1) * bump, ny = ((nrm[si + 1] / 255) * 2 - 1) * bump, nz = (nrm[si + 2] / 255) * 2 - 1;
+      const tx = ((nrm[si] / 255) * 2 - 1) * bump, ty = ((nrm[si + 1] / 255) * 2 - 1) * bump;
+      // the bumps turn with the pattern
+      let nx = cr * tx - sr * ty, ny = sr * tx + cr * ty, nz = (nrm[si + 2] / 255) * 2 - 1;
       const nl = Math.hypot(nx, ny, nz) || 1;
       nx /= nl; ny /= nl; nz /= nl;
       const ndl = Math.max(0, (nx * L[0] + ny * L[1] + nz * L[2]) / ll);

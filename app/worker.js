@@ -555,7 +555,7 @@ async function exportVariants(args, progress, sendFile) {
       made.push(mat);
     }
     T.mark(`variant ${i + 1} materials`);
-    const bytes = await encodeVariant(io, doc, { meshopt: args.meshopt !== false });
+    const bytes = await encodeVariant(io, doc, { meshopt: args.meshopt !== false, liftM: Math.max(0, +args.liftMm || 0) / 1000 });
     T.mark(`variant ${i + 1} encode`);
     const name = args.names[i];
     const sizeMm = outerSizeMm(doc, args.axes);

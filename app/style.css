@@ -187,6 +187,9 @@ details.more[open] summary { margin-bottom: 8px; }
 .more-body .hint { margin: 0; }
 .range-row { display: flex; gap: 10px; align-items: center; }
 .range-row input[type=range] { flex: 1; accent-color: var(--accent); }
+.rot-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rot-row input[type=range] { flex: 1; min-width: 80px; accent-color: var(--accent); }
+.input.num.short { width: 58px; padding-left: 6px; padding-right: 6px; }
 
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
 .tabs button { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 11px; cursor: pointer; color: var(--muted); font-size: 13px; }

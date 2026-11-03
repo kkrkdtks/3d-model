@@ -532,17 +532,23 @@ export async function createMaterial(doc, def, color, loadImage, cache = new Map
 }
 
 /**
- * UVs in texture tiles from UVs in metres. A tile is tileCm wide (tileHeightCm high, default square);
- * rotate: 90 turns the pattern a quarter turn (e.g. wood grain along the other side of a table top).
+ * UVs in texture tiles from UVs in metres. A tile is tileCm wide (tileHeightCm high, default square).
+ * rotate turns the pattern on the surface by that many degrees (90 = a quarter turn, e.g. wood grain
+ * along the other side of a table top). def.rotate, the correction of a photo material whose grain was
+ * captured askew, is added: the pattern is straightened once in the material and turned per part.
  */
 export function tileUV(uvMeters, def, rotate = 0) {
   const tu = (def.tileCm || 25) / 100, tv = (def.tileHeightCm || def.tileCm || 25) / 100;
+  const deg = ((+rotate || 0) + (+def.rotate || 0)) % 360;
+  const rad = (deg * Math.PI) / 180;
+  // quarter turns exactly (cos 90° is not 0 in floating point)
+  const c = deg % 90 === 0 ? Math.round(Math.cos(rad)) : Math.cos(rad);
+  const s = deg % 90 === 0 ? Math.round(Math.sin(rad)) : Math.sin(rad);
   const uv = new Float32Array(uvMeters.length);
   for (let i = 0; i < uvMeters.length; i += 2) {
-    const u = rotate === 90 ? uvMeters[i + 1] : uvMeters[i];
-    const v = rotate === 90 ? -uvMeters[i] : uvMeters[i + 1];
-    uv[i] = u / tu;
-    uv[i + 1] = v / tv;
+    const u = uvMeters[i], v = uvMeters[i + 1];
+    uv[i] = (c * u + s * v) / tu;
+    uv[i + 1] = (-s * u + c * v) / tv;
   }
   return uv;
 }
@@ -572,12 +578,36 @@ export async function compressKeptTextures(doc, encodeTexture, maxSize = DEFAULT
 }
 
 /**
+ * Lift every mesh by liftM metres: the floor stays at y = 0 (the origin), the furniture stands a
+ * little above it, so a room floor that is not quite flat or a rug laid under it does not swallow
+ * the legs. Each position accessor moves once, even when primitives share it.
+ */
+export function liftDocument(doc, liftM) {
+  if (!liftM) return;
+  const seen = new Set();
+  for (const mesh of doc.getRoot().listMeshes())
+    for (const prim of mesh.listPrimitives()) {
+      const acc = prim.getAttribute('POSITION');
+      if (!acc || seen.has(acc)) continue;
+      seen.add(acc);
+      const n = acc.getCount(), out = new Float32Array(n * 3), el = [0, 0, 0];
+      for (let i = 0; i < n; i++) {
+        acc.getElement(i, el);
+        out[i * 3] = el[0]; out[i * 3 + 1] = el[1] + liftM; out[i * 3 + 2] = el[2];
+      }
+      acc.setArray(out).setNormalized(false);
+    }
+}
+
+/**
  * Compress a finished variant document and return GLB bytes.
  * meshopt (EXT_meshopt_compression) gives the smallest files; without it only quantization is used.
+ * liftM raises the furniture off the floor (see liftDocument) in the written copy only.
  */
 export async function encodeVariant(io, doc, opts = {}) {
-  const { meshopt = true } = opts;
+  const { meshopt = true, liftM = 0 } = opts;
   const copy = cloneDocument(doc);
+  liftDocument(copy, liftM);
   if (meshopt) {
     await MeshoptEncoder.ready;
     await copy.transform(prune({ keepExtras: true }), reorder({ encoder: MeshoptEncoder }), quantize());
