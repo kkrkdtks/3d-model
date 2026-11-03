@@ -30,6 +30,53 @@ function faceAdjacency(index) {
 }
 
 /**
+ * Small patches projected along another axis than everything around them (a few steep triangles in a
+ * rippled generated surface, typically just inside a rim) show as specks where the pattern jumps.
+ * Each patch under minArea (m²) joins the projection it borders most, if it faces that way at all.
+ */
+function removeIslands(pos, index, fn, cls, nbr, unitsToMeters, minArea = 0.0005) {
+  const nf = cls.length, area = new Float64Array(nf), s2 = unitsToMeters * unitsToMeters;
+  for (let f = 0; f < nf; f++) {
+    const a = index[f * 3] * 3, b = index[f * 3 + 1] * 3, c = index[f * 3 + 2] * 3;
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
+    area[f] = (0.5 * Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx)) * s2;
+  }
+  for (let round = 0; round < 2; round++) {
+    const comp = new Int32Array(nf).fill(-1), stack = [];
+    let changed = 0;
+    for (let f0 = 0; f0 < nf; f0++) {
+      if (comp[f0] >= 0) continue;
+      const k = cls[f0], faces = [];
+      let sum = 0, nx = 0, ny = 0, nz = 0;
+      comp[f0] = f0; stack.push(f0);
+      while (stack.length) {
+        const f = stack.pop();
+        faces.push(f);
+        sum += area[f]; nx += fn[f * 3] * area[f]; ny += fn[f * 3 + 1] * area[f]; nz += fn[f * 3 + 2] * area[f];
+        for (let j = 0; j < 3; j++) {
+          const g = nbr[f * 3 + j];
+          if (g >= 0 && comp[g] < 0 && cls[g] === k) { comp[g] = f0; stack.push(g); }
+        }
+      }
+      if (sum >= minArea) continue;
+      const votes = new Float64Array(6);
+      for (const f of faces)
+        for (let j = 0; j < 3; j++) { const g = nbr[f * 3 + j]; if (g >= 0 && cls[g] !== k) votes[cls[g]]++; }
+      let best = -1;
+      for (let c = 0; c < 6; c++) {
+        const ax = AXES[c];
+        if (votes[c] > 0 && nx * ax[0] + ny * ax[1] + nz * ax[2] > 0.2 * sum && (best < 0 || votes[c] > votes[best])) best = c;
+      }
+      if (best < 0) continue;
+      for (const f of faces) cls[f] = best;
+      changed++;
+    }
+    if (!changed) break;
+  }
+}
+
+/**
  * @param {Float32Array} pos welded positions
  * @param {Float32Array} nrm welded smooth normals
  * @param {Uint32Array} index triangles
@@ -41,8 +88,18 @@ export function boxUV(pos, nrm, index, unitsToMeters, smoothIters = 3) {
   const nf = index.length / 3;
   const cls = new Uint8Array(nf), fn = new Float32Array(nf * 3);
   for (let f = 0; f < nf; f++) {
-    let x = 0, y = 0, z = 0;
-    for (let c = 0; c < 3; c++) { const v = index[f * 3 + c] * 3; x += nrm[v]; y += nrm[v + 1]; z += nrm[v + 2]; }
+    // projected along the mean of the triangle's own direction and its (smoothed) vertex normals:
+    // vertex normals alone lean far from a large triangle at a rounded rim, the triangle alone
+    // follows every little step of a rippled generated surface
+    const a = index[f * 3] * 3, b = index[f * 3 + 1] * 3, d = index[f * 3 + 2] * 3;
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const vx = pos[d] - pos[a], vy = pos[d + 1] - pos[a + 1], vz = pos[d + 2] - pos[a + 2];
+    const gx = uy * vz - uz * vy, gy = uz * vx - ux * vz, gz = ux * vy - uy * vx;
+    let x = nrm[a] + nrm[b] + nrm[d], y = nrm[a + 1] + nrm[b + 1] + nrm[d + 1], z = nrm[a + 2] + nrm[b + 2] + nrm[d + 2];
+    const gl = Math.hypot(gx, gy, gz), vl = Math.hypot(x, y, z) || 1;
+    x /= vl; y /= vl; z /= vl;
+    // a folded triangle (facing against its normals) or one without area: vertex normals only
+    if (gl > 1e-20 && gx * x + gy * y + gz * z > 0) { x += gx / gl; y += gy / gl; z += gz / gl; }
     const l = Math.hypot(x, y, z) || 1;
     fn[f * 3] = x / l; fn[f * 3 + 1] = y / l; fn[f * 3 + 2] = z / l;
     const ax = Math.abs(x), ay = Math.abs(y), az = Math.abs(z);
@@ -64,6 +121,7 @@ export function boxUV(pos, nrm, index, unitsToMeters, smoothIters = 3) {
     }
     cls.set(next);
   }
+  removeIslands(pos, index, fn, cls, nbr, unitsToMeters);
   // unweld per (vertex, class)
   const remap = new Map();
   const outPos = [], outNrm = [], outUv = [], outIdx = new Uint32Array(index.length);

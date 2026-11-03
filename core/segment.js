@@ -52,6 +52,42 @@ export function vertexNormals(pos, index, vertexCount) {
   return n;
 }
 
+/**
+ * Feature-preserving smoothing of unit vertex normals (in place): each pass blends a vertex's normal
+ * with its neighbours', weighting a neighbour down sharply as the angle between them grows. The fine
+ * ripples of a generated surface go away, real edges and corners (more than ~30° apart) stay sharp.
+ */
+export function smoothNormals(index, nrm, iters = 8, sigma = 0.05) {
+  const nv = nrm.length / 3;
+  const deg = new Int32Array(nv + 1);
+  for (let i = 0; i < index.length; i++) deg[index[i] + 1] += 2;
+  for (let v = 0; v < nv; v++) deg[v + 1] += deg[v];
+  const adj = new Int32Array(deg[nv]), fill = deg.slice(0, nv);
+  for (let f = 0; f < index.length; f += 3)
+    for (let c = 0; c < 3; c++) {
+      const v = index[f + c];
+      adj[fill[v]++] = index[f + ((c + 1) % 3)];
+      adj[fill[v]++] = index[f + ((c + 2) % 3)];
+    }
+  let src = nrm, dst = new Float32Array(nrm.length);
+  for (let it = 0; it < iters; it++) {
+    for (let v = 0; v < nv; v++) {
+      const x = src[v * 3], y = src[v * 3 + 1], z = src[v * 3 + 2];
+      let sx = x, sy = y, sz = z;
+      for (let k = deg[v]; k < deg[v + 1]; k++) {
+        const u = adj[k] * 3, ux = src[u], uy = src[u + 1], uz = src[u + 2];
+        const w = Math.exp((x * ux + y * uy + z * uz - 1) / sigma);
+        sx += w * ux; sy += w * uy; sz += w * uz;
+      }
+      const l = Math.hypot(sx, sy, sz) || 1;
+      dst[v * 3] = sx / l; dst[v * 3 + 1] = sy / l; dst[v * 3 + 2] = sz / l;
+    }
+    [src, dst] = [dst, src];
+  }
+  if (src !== nrm) nrm.set(src);
+  return nrm;
+}
+
 function normalize3(n) {
   for (let i = 0; i < n.length; i += 3) {
     const l = Math.hypot(n[i], n[i + 1], n[i + 2]) || 1;

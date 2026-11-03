@@ -15,7 +15,7 @@ import {
   KHRMeshQuantization,
 } from '@gltf-transform/extensions';
 import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
-import { segment, vertexNormals } from './segment.js';
+import { segment, smoothNormals, vertexNormals } from './segment.js';
 import { boxUV } from './uvbox.js';
 import {
   bboxOf, fitToBox, furnitureAxes, mulMat4, stretchFor, stretchGeometry, transformPositions, xfMatrix,
@@ -26,6 +26,7 @@ export const DEFAULTS = {
   simplify: 0.25,      // triangles kept on re-skinned parts (their old UVs are dropped, so this stays clean)
   keepSimplify: 0.35,  // triangles kept on parts that stay as generated (old UVs must survive)
   error: 0.001,
+  smoothNormals: 12,    // passes of edge-keeping normal smoothing on re-skinned parts (0: off)
   keptTextureSize: 4096,
 };
 
@@ -245,8 +246,8 @@ function trianglesOf(index, faces) {
   return out;
 }
 
-/** Drop unused vertices and renumber, keeping first-use order. */
-function compactIndexed(pos, index) {
+/** Drop unused vertices and renumber, keeping first-use order (and any per-vertex vec3 attribute). */
+function compactIndexed(pos, index, nrm = null) {
   const remap = new Int32Array(pos.length / 3).fill(-1);
   const out = new Uint32Array(index.length);
   let n = 0;
@@ -255,23 +256,42 @@ function compactIndexed(pos, index) {
     if (remap[v] < 0) remap[v] = n++;
     out[i] = remap[v];
   }
-  const p = new Float32Array(n * 3);
-  for (let v = 0; v < remap.length; v++) if (remap[v] >= 0) p.set(pos.subarray(v * 3, v * 3 + 3), remap[v] * 3);
-  return { pos: p, index: out };
+  const p = new Float32Array(n * 3), q = nrm ? new Float32Array(n * 3) : null;
+  for (let v = 0; v < remap.length; v++) {
+    if (remap[v] < 0) continue;
+    p.set(pos.subarray(v * 3, v * 3 + 3), remap[v] * 3);
+    if (q) q.set(nrm.subarray(v * 3, v * 3 + 3), remap[v] * 3);
+  }
+  return q ? { pos: p, index: out, nrm: q } : { pos: p, index: out };
 }
 
-/** meshoptimizer simplification on plain arrays (MeshoptSimplifier.ready must have resolved). */
-export function simplifyIndexed(pos, index, ratio, error, lockBorder = true) {
-  if (ratio >= 1) return compactIndexed(pos, index);
+// How much a change of surface direction counts against a change of shape when triangles are
+// removed. Positions alone keep the outline but not the way light falls on it: glossy parts then
+// show jagged, broken-looking highlights along edges and rims.
+const NORMAL_WEIGHT = 1;
+
+/**
+ * meshoptimizer simplification on plain arrays (MeshoptSimplifier.ready must have resolved).
+ * With nrm (unit normals per vertex) the surface direction is kept too, and the result carries the
+ * surviving vertices' normals.
+ */
+export function simplifyIndexed(pos, index, ratio, error, lockBorder = true, nrm = null) {
+  if (ratio >= 1) return compactIndexed(pos, index, nrm);
   const target = Math.floor((ratio * index.length) / 3) * 3;
-  const [dst] = MeshoptSimplifier.simplify(index, pos, 3, target, error, lockBorder ? ['LockBorder'] : []);
-  return compactIndexed(pos, dst);
+  const flags = lockBorder ? ['LockBorder'] : [];
+  const [dst] = nrm
+    ? MeshoptSimplifier.simplifyWithAttributes(index, pos, 3, nrm, 3, [NORMAL_WEIGHT, NORMAL_WEIGHT, NORMAL_WEIGHT], null, target, error, flags)
+    : MeshoptSimplifier.simplify(index, pos, 3, target, error, flags);
+  return compactIndexed(pos, dst, nrm);
 }
 
 /**
  * New geometry for faces that get a tiling material: welded, in the output frame (metres, see
  * outputTransform), optionally resized (opts.size {w, d} mm along opts.axes), simplified, with
  * smooth normals and box-projected UVs in metres.
+ * Normals come from the full-detail surface, with the ripples of a generated surface smoothed out
+ * (real edges stay), and are kept through simplification, so edges and rims shade cleanly instead
+ * of following the coarser triangles.
  * Shared by the export and the live preview, so what you see is what gets saved.
  */
 export function reskinGeometry(welded, faces, opts = {}) {
@@ -280,10 +300,12 @@ export function reskinGeometry(welded, faces, opts = {}) {
   const pos = o.xf ? transformPositions(sub.pos, o.xf) : sub.pos;
   if (o.size) stretchGeometry(pos, null, stretchFor(bboxOf(pos), o.axes, o.size));
   const box = bboxOf(pos);
-  const simp = simplifyIndexed(pos, sub.index, o.simplify, o.error, true);
+  const dense = vertexNormals(pos, sub.index, pos.length / 3);
+  // pieces this app already simplified (o.simplify 1) were smoothed when they were made
+  if (o.smoothNormals && o.simplify < 1) smoothNormals(sub.index, dense, o.smoothNormals);
+  const simp = simplifyIndexed(pos, sub.index, o.simplify, o.error, true, dense);
   fitToBox(simp.pos, box);
-  const nrm = vertexNormals(simp.pos, simp.index, simp.pos.length / 3);
-  return boxUV(simp.pos, nrm, simp.index, 1);
+  return boxUV(simp.pos, simp.nrm, simp.index, 1);
 }
 
 export function facesOfParts(faceLabels, parts) {
@@ -400,10 +422,24 @@ export function groupPrimitive(ctx, group, { reskin, size = null }) {
   return { prim: prims[0], prims, sources: from };
 }
 
-/** Simplify a part that keeps its original texture (its UV seams stay locked), keeping its exact extent. */
+/**
+ * Simplify a part that keeps its original texture (its UV seams stay locked), keeping its exact
+ * extent. Its own normals count too, so smooth and glossy areas keep their shading.
+ */
 function simplifyKept(p, o) {
-  const box = bboxOf(p.getAttribute('POSITION').getArray());
-  simplifyPrimitive(p, { simplifier: MeshoptSimplifier, ratio: o.keepSimplify, error: o.error, lockBorder: true });
+  const P = p.getAttribute('POSITION'), N = p.getAttribute('NORMAL');
+  const box = bboxOf(P.getArray());
+  const I = p.getIndices();
+  if (!N || !I || o.keepSimplify >= 1) {
+    simplifyPrimitive(p, { simplifier: MeshoptSimplifier, ratio: o.keepSimplify, error: o.error, lockBorder: true });
+  } else {
+    const index = Uint32Array.from(I.getArray());
+    const target = Math.floor((o.keepSimplify * index.length) / 3) * 3;
+    const [dst] = MeshoptSimplifier.simplifyWithAttributes(index, floatArray(P), 3, floatArray(N), 3,
+      [NORMAL_WEIGHT, NORMAL_WEIGHT, NORMAL_WEIGHT], null, target, o.error, ['LockBorder']);
+    I.setArray(dst); // this part's own index list (made for it in prepareOutput / groupPrimitive)
+    compactPrimitive(p);
+  }
   const pos = p.getAttribute('POSITION');
   pos.setArray(fitToBox(pos.getArray().slice(), box));
 }
