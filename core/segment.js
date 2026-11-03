@@ -88,6 +88,137 @@ export function smoothNormals(index, nrm, iters = 8, sigma = 0.05) {
   return nrm;
 }
 
+/**
+ * Feature-preserving denoising of a surface, positions in place (after Sun et al. 2007, "Fast and
+ * effective feature-preserving mesh denoising"): face normals are filtered with edge-keeping
+ * weights, then vertices move so that their faces follow the filtered normals. Takes out the fine
+ * ripples of a generated surface, which a glossy or mirror-like finish shows as wobbly, jagged
+ * highlights; edges and corners (faces more than acos(threshold) apart) stay. Border vertices (edges with
+ * one face: where a part meets another) stay put, so do vertices within lockBox of the part's box (its
+ * size stays exact), and no vertex moves more than maxMove. A move that would fold a triangle over or
+ * squash it to a sliver is taken back.
+ */
+export function fairSurface(pos, index, { normalIters = 20, vertexIters = 10, threshold = 0.9, maxMove = Infinity, lockBox = 0, squash = 0.5 } = {}) {
+  const nf = index.length / 3, nv = pos.length / 3;
+  // faces around each vertex (CSR)
+  const off = new Int32Array(nv + 1);
+  for (let i = 0; i < index.length; i++) off[index[i] + 1]++;
+  for (let v = 0; v < nv; v++) off[v + 1] += off[v];
+  const vf = new Int32Array(index.length), fill = off.slice(0, nv);
+  for (let i = 0; i < index.length; i++) vf[fill[index[i]]++] = (i / 3) | 0;
+  // border vertices: on an edge only one face uses
+  const border = new Uint8Array(nv);
+  const keys = new Float64Array(index.length);
+  for (let f = 0; f < nf; f++)
+    for (let c = 0; c < 3; c++) {
+      const a = index[f * 3 + c], b = index[f * 3 + ((c + 1) % 3)];
+      keys[f * 3 + c] = a < b ? a * nv + b : b * nv + a;
+    }
+  keys.sort();
+  for (let i = 0; i < keys.length; ) {
+    let j = i + 1;
+    while (j < keys.length && keys[j] === keys[i]) j++;
+    if (j - i === 1) { const a = Math.floor(keys[i] / nv); border[a] = 1; border[keys[i] - a * nv] = 1; }
+    i = j;
+  }
+  const start = pos.slice();
+  if (lockBox > 0) {
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < pos.length; i += 3)
+      for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], pos[i + k]); hi[k] = Math.max(hi[k], pos[i + k]); }
+    for (let v = 0; v < nv; v++)
+      for (let k = 0; k < 3; k++)
+        if (pos[v * 3 + k] - lo[k] < lockBox || hi[k] - pos[v * 3 + k] < lockBox) border[v] = 1;
+  }
+  const fnrm = new Float32Array(nf * 3), area = new Float32Array(nf);
+  for (let f = 0; f < nf; f++) {
+    const a = index[f * 3] * 3, b = index[f * 3 + 1] * 3, c = index[f * 3 + 2] * 3;
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const wx = pos[c] - pos[a], wy = pos[c + 1] - pos[a + 1], wz = pos[c + 2] - pos[a + 2];
+    const x = uy * wz - uz * wy, y = uz * wx - ux * wz, z = ux * wy - uy * wx, l = Math.sqrt(x * x + y * y + z * z);
+    area[f] = l / 2;
+    if (l > 0) { fnrm[f * 3] = x / l; fnrm[f * 3 + 1] = y / l; fnrm[f * 3 + 2] = z / l; }
+  }
+  // 1. filter face normals over the faces that share a vertex
+  let src = fnrm, dst = new Float32Array(nf * 3);
+  for (let it = 0; it < normalIters; it++) {
+    for (let f = 0; f < nf; f++) {
+      const x = src[f * 3], y = src[f * 3 + 1], z = src[f * 3 + 2];
+      let sx = 0, sy = 0, sz = 0;
+      for (let c = 0; c < 3; c++) {
+        const v = index[f * 3 + c];
+        for (let k = off[v]; k < off[v + 1]; k++) {
+          const g = vf[k] * 3, d = x * src[g] + y * src[g + 1] + z * src[g + 2] - threshold;
+          if (d <= 0) continue;
+          const w = area[vf[k]] * d * d;
+          sx += w * src[g]; sy += w * src[g + 1]; sz += w * src[g + 2];
+        }
+      }
+      const l2 = sx * sx + sy * sy + sz * sz;
+      if (l2 > 0) { const l = Math.sqrt(l2); dst[f * 3] = sx / l; dst[f * 3 + 1] = sy / l; dst[f * 3 + 2] = sz / l; }
+      else { dst[f * 3] = x; dst[f * 3 + 1] = y; dst[f * 3 + 2] = z; }
+    }
+    [src, dst] = [dst, src];
+  }
+  // 2. move vertices onto the planes of their faces' filtered normals
+  const cen = new Float32Array(nf * 3), max2 = maxMove * maxMove;
+  const prev = new Float32Array(pos.length), was = new Float32Array(nf * 2);
+  // a face as it stands in P: how well it follows its filtered normal (cosine) and its area
+  const faceState = (P, f, out, o) => {
+    const a = index[f * 3] * 3, b = index[f * 3 + 1] * 3, c = index[f * 3 + 2] * 3;
+    const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2];
+    const wx = P[c] - P[a], wy = P[c + 1] - P[a + 1], wz = P[c + 2] - P[a + 2];
+    const x = uy * wz - uz * wy, y = uz * wx - ux * wz, z = ux * wy - uy * wx, l = Math.sqrt(x * x + y * y + z * z);
+    out[o] = l > 0 ? (x * src[f * 3] + y * src[f * 3 + 1] + z * src[f * 3 + 2]) / l : -1;
+    out[o + 1] = l / 2;
+  };
+  const now = new Float32Array(2);
+  for (let it = 0; it < vertexIters; it++) {
+    prev.set(pos);
+    for (let f = 0; f < nf; f++) {
+      const a = index[f * 3] * 3, b = index[f * 3 + 1] * 3, c = index[f * 3 + 2] * 3;
+      for (let k = 0; k < 3; k++) cen[f * 3 + k] = (pos[a + k] + pos[b + k] + pos[c + k]) / 3;
+      faceState(pos, f, was, f * 2);
+    }
+    for (let v = 0; v < nv; v++) {
+      if (border[v] || off[v + 1] === off[v]) continue;
+      const p = v * 3;
+      let dx = 0, dy = 0, dz = 0;
+      for (let k = off[v]; k < off[v + 1]; k++) {
+        const g = vf[k] * 3, nx = src[g], ny = src[g + 1], nz = src[g + 2];
+        const t = nx * (cen[g] - pos[p]) + ny * (cen[g + 1] - pos[p + 1]) + nz * (cen[g + 2] - pos[p + 2]);
+        dx += nx * t; dy += ny * t; dz += nz * t;
+      }
+      const n = off[v + 1] - off[v];
+      let x = pos[p] + dx / n, y = pos[p + 1] + dy / n, z = pos[p + 2] + dz / n;
+      const ex = x - start[p], ey = y - start[p + 1], ez = z - start[p + 2], e2 = ex * ex + ey * ey + ez * ez;
+      if (e2 > max2) {
+        const s = maxMove / Math.sqrt(e2);
+        x = start[p] + ex * s; y = start[p + 1] + ey * s; z = start[p + 2] + ez * s;
+      }
+      pos[p] = x; pos[p + 1] = y; pos[p + 2] = z;
+    }
+    // take back the moves that fold a face over (against its filtered normal, worse than before) or
+    // squash it further below `squash` of its first area (slivers flip when the file is quantized);
+    // again for the faces that this puts back in between
+    for (let round = 0; round < 4; round++) {
+      let back = 0;
+      for (let f = 0; f < nf; f++) {
+        faceState(pos, f, now, 0);
+        if (!((now[0] < 0 && now[0] < was[f * 2]) || (now[1] < squash * area[f] && now[1] < was[f * 2 + 1]))) continue;
+        for (let c = 0; c < 3; c++) {
+          const v = index[f * 3 + c] * 3;
+          if (pos[v] === prev[v] && pos[v + 1] === prev[v + 1] && pos[v + 2] === prev[v + 2]) continue;
+          pos[v] = prev[v]; pos[v + 1] = prev[v + 1]; pos[v + 2] = prev[v + 2];
+          back++;
+        }
+      }
+      if (!back) break;
+    }
+  }
+  return pos;
+}
+
 function normalize3(n) {
   for (let i = 0; i < n.length; i += 3) {
     const l = Math.hypot(n[i], n[i + 1], n[i + 2]) || 1;

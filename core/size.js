@@ -130,9 +130,14 @@ export const STRETCH_BAND = 0.15; // metres kept rigid at each end (corner radiu
 
 /**
  * How to bring a part (bbox in metres) to a new size { w, d } in mm (either may be missing).
+ * A band at each end moves rigidly (rounded corners, edge profile) and the middle stretches.
+ * hold [x, y, z] (metres from the part's centre, per axis): the structure under it (frame, legs) reaches
+ * that far and stays; the part then keeps its middle up to there as it is and stretches only between
+ * there and the end bands, so a top's underside keeps meeting the frame it sits on instead of pulling
+ * its cut-out away from it (see slabPlan).
  * Returns a list of per-axis stretches, or null when nothing changes.
  */
-export function stretchFor(bbox, axes, size, band = STRETCH_BAND) {
+export function stretchFor(bbox, axes, size, { band = STRETCH_BAND, hold = null } = {}) {
   const out = [];
   for (const key of ['w', 'd']) {
     const target = size?.[key];
@@ -142,34 +147,207 @@ export function stretchFor(bbox, axes, size, band = STRETCH_BAND) {
     const half = (max - min) / 2, newHalf = target / 2000;
     if (!(half > 1e-6) || Math.abs(newHalf - half) < 5e-5) continue;
     const b = Math.min(band, half * 0.3, newHalf * 0.3);
-    const inner = half - b, newInner = newHalf - b;
-    out.push({ axis, c: (min + max) / 2, inner, newInner, k: newInner / inner });
+    const inner = half - b, shift = newHalf - half, c = (min + max) / 2;
+    let m = 0, r = inner;
+    const h = hold?.[axis] || 0;
+    if (h > 0 && h < half) {
+      // past the structure, and the end band starts no closer than halfway from it to the end
+      const rr = Math.max(inner, h + 0.5 * (half - h));
+      if (rr + shift - h > 0.05 * (rr - h)) { m = h; r = rr; }
+    }
+    out.push({ axis, c, m, r, shift, k: (r + shift - m) / (r - m) });
   }
   return out.length ? out : null;
 }
 
 export function stretchValue(v, s) {
-  const d = v - s.c;
-  if (d > s.inner) return s.c + s.newInner + (d - s.inner);
-  if (d < -s.inner) return s.c - s.newInner + (d + s.inner);
-  return s.c + d * s.k;
+  const d = v - s.c, a = Math.abs(d), sg = d < 0 ? -1 : 1;
+  if (a >= s.r) return v + sg * s.shift;
+  if (a <= s.m) return v;
+  return s.c + sg * (s.m + (a - s.m) * s.k);
 }
 
-/** Normals first (they need the positions before the stretch), then positions. In place. */
-export function stretchGeometry(pos, nrm, st) {
+/**
+ * Normals first (they need the positions before the stretch), then positions. In place.
+ * minY: only points from that height up move (the underside of a top in one part with the legs under it).
+ */
+export function stretchGeometry(pos, nrm, st, minY = -Infinity) {
   if (!st) return;
   if (nrm)
     for (let i = 0; i < nrm.length; i += 3) {
+      if (pos[i + 1] < minY) continue;
       let changed = false;
-      for (const s of st)
-        if (Math.abs(pos[i + s.axis] - s.c) <= s.inner) { nrm[i + s.axis] /= s.k; changed = true; }
+      for (const s of st) {
+        const a = Math.abs(pos[i + s.axis] - s.c);
+        if (a > s.m && a < s.r) { nrm[i + s.axis] /= s.k; changed = true; }
+      }
       if (changed) {
         const l = Math.hypot(nrm[i], nrm[i + 1], nrm[i + 2]) || 1;
         nrm[i] /= l; nrm[i + 1] /= l; nrm[i + 2] /= l;
       }
     }
-  for (const s of st) for (let i = s.axis; i < pos.length; i += 3) pos[i] = stretchValue(pos[i], s);
+  for (const s of st)
+    for (let i = s.axis; i < pos.length; i += 3) if (pos[i - s.axis + 1] >= minY) pos[i] = stretchValue(pos[i], s);
 }
+
+// ---------- parts that resize along with a group ----------
+
+const unionBox = (list) => {
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (const p of list) for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], p.min[k]); max[k] = Math.max(max[k], p.max[k]); }
+  return { min, max };
+};
+
+/**
+ * Parts that make one slab with a group being resized and so take the same new size: the underside of
+ * a table top, or a second layer of it (AI models often have the top as a light upper layer and a dark
+ * lower one, split into two parts by colour). Left as they were, a top made 2000 mm long hangs open
+ * past its 1980 mm underside (see-through from below and at the rim) and the underside sticks out at
+ * the sides of a top made narrower.
+ * A follower is thin (at most 2.5 × the group's thickness, or 8 % of the model's height), about as wide
+ * and deep as the group (70 % or more of it both ways, at most 10 % past it, centred within it) and
+ * touches it from below or above; a layer touching a follower counts too. Frames, aprons and legs are
+ * never that, so they keep their size.
+ * stats: [{ id, min, max }] in model units (y up), axes from furnitureAxes. Returns ids, none in leader or skip.
+ */
+export function slabFollowers(stats, leader, axes, skip = []) {
+  const lead = stats.filter((p) => leader.includes(p.id));
+  if (!lead.length) return [];
+  const box = unionBox(lead), all = unionBox(stats);
+  const H = all.max[1] - all.min[1], tol = 0.01 * H;
+  const thin = Math.max(2.5 * (box.max[1] - box.min[1]), 0.08 * H);
+  const fits = (p) => {
+    if (!(p.max[1] - p.min[1] <= thin)) return false;
+    for (const k of [axes.w, axes.d]) {
+      const e = box.max[k] - box.min[k], c = (p.min[k] + p.max[k]) / 2;
+      if (p.max[k] - p.min[k] < 0.7 * e || p.min[k] < box.min[k] - 0.1 * e || p.max[k] > box.max[k] + 0.1 * e) return false;
+      if (c < box.min[k] || c > box.max[k]) return false;
+    }
+    return true;
+  };
+  const out = [], taken = new Set([...leader, ...skip]);
+  let lo = box.min[1], hi = box.max[1];
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const p of stats) {
+      if (taken.has(p.id) || p.faces === 0 || !fits(p) || p.max[1] < lo - tol || p.min[1] > hi + tol) continue;
+      out.push(p.id);
+      taken.add(p.id);
+      lo = Math.min(lo, p.min[1]);
+      hi = Math.max(hi, p.max[1]);
+      grew = true;
+    }
+  }
+  return out.sort((a, b) => a - b);
+}
+
+/**
+ * How a resized group takes its slab along, from the welded mesh the parts are made of
+ * (geo: { pos, index, faceLabels }, model units, y up):
+ * - followers: [{ id, minY }]: the thin layers of slabFollowers (minY null: all of them moves), and parts
+ *   that hold the top's underside together with legs below it (one part from the floor up; minY: only
+ *   their points from just under the slab up move, the legs stay);
+ * - hold: [x, y, z]: how far from the group's centre the structure under the slab (frame, legs, apron)
+ *   reaches, per axis: the slab keeps its middle up to there (see stretchFor), so cut-outs of its
+ *   underside around the frame stay around it. null when nothing is under it.
+ * - underside: whether the group itself has an underside (it is stretched the same way then; a top
+ *   that is only the upper skin keeps the even stretch, which keeps its own texture even).
+ */
+export function slabPlan(geo, stats, leader, axes, skip = []) {
+  const lead = stats.filter((p) => leader.includes(p.id));
+  if (!lead.length) return { followers: [], hold: null, underside: false };
+  const box = unionBox(lead), all = unionBox(stats);
+  const H = all.max[1] - all.min[1], tol = 0.01 * H;
+  const thin = slabFollowers(stats, leader, axes, skip);
+  const slab = unionBox(stats.filter((p) => leader.includes(p.id) || thin.includes(p.id)));
+  const yb = slab.min[1] - tol;
+  const hk = [axes.w, axes.d], c = [0, 1, 2].map((k) => (box.min[k] + box.max[k]) / 2);
+  const ext = (b, k) => b.max[k] - b.min[k];
+  const used = new Set([...leader, ...thin, ...skip]);
+  const mixed = new Set(stats.filter((p) => !used.has(p.id) && p.faces !== 0 && p.max[1] >= yb && p.min[1] < yb
+    && hk.every((k) => ext(p, k) >= 0.7 * ext(box, k) && ext(p, k) <= 1.25 * ext(box, k))).map((p) => p.id));
+  const { pos, index, faceLabels } = geo;
+  const isLead = new Set(leader), isThin = new Set(thin);
+  const inBand = (f) => pos[index[f * 3] * 3 + 1] >= yb && pos[index[f * 3 + 1] * 3 + 1] >= yb && pos[index[f * 3 + 2] * 3 + 1] >= yb;
+  // area of a level triangle (either way up: generated meshes do not always wind them alike), else 0
+  const level = (f) => {
+    const a = index[f * 3] * 3, b = index[f * 3 + 1] * 3, d = index[f * 3 + 2] * 3;
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const vx = pos[d] - pos[a], vy = pos[d + 1] - pos[a + 1], vz = pos[d + 2] - pos[a + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, l = Math.hypot(nx, ny, nz);
+    return l > 0 && Math.abs(ny) / l > 0.5 ? l / 2 : 0;
+  };
+  // the underside: of the group itself (level triangles in its lower half), and of a bigger part from
+  // the floor up (level triangles in its top band, over the legs)
+  const down = new Map(), mid = (box.min[1] + box.max[1]) / 2;
+  let leadDown = 0;
+  for (let f = 0; f < faceLabels.length; f++) {
+    const id = faceLabels[f];
+    if (isLead.has(id)) {
+      if (pos[index[f * 3] * 3 + 1] + pos[index[f * 3 + 1] * 3 + 1] + pos[index[f * 3 + 2] * 3 + 1] < 3 * mid) leadDown += level(f);
+    } else if (mixed.has(id) && inBand(f)) down.set(id, (down.get(id) || 0) + level(f));
+  }
+  const footprint = ext(box, axes.w) * ext(box, axes.d);
+  const banded = new Set([...mixed].filter((id) => (down.get(id) || 0) >= 0.5 * footprint));
+  // the structure the slab sits on: everything else right under it and within its outline
+  const fixedLo = yb - 0.03 * H, hold = [0, 0, 0];
+  let fixedSeen = false;
+  for (let f = 0; f < faceLabels.length; f++) {
+    const id = faceLabels[f];
+    if (isLead.has(id) || isThin.has(id) || (banded.has(id) && inBand(f))) continue;
+    for (let c3 = 0; c3 < 3; c3++) {
+      const v = index[f * 3 + c3] * 3, y = pos[v + 1];
+      if (y < fixedLo || y > slab.max[1]) continue;
+      if (hk.some((k) => pos[v + k] < slab.min[k] || pos[v + k] > slab.max[k])) continue;
+      fixedSeen = true;
+      for (const k of hk) hold[k] = Math.max(hold[k], Math.abs(pos[v + k] - c[k]));
+    }
+  }
+  const followers = [...thin.map((id) => ({ id, minY: null })), ...[...banded].map((id) => ({ id, minY: yb }))];
+  return { followers: followers.sort((x, y) => x.id - y.id), hold: fixedSeen ? hold : null, underside: leadDown >= 0.3 * footprint };
+}
+
+/**
+ * What is written (and shown) for the groups when some are resized. Every group keeps its parts but
+ * the followers of a resized group (slabPlan), which become pieces of their own: their look is still
+ * that of the group they are in (or the original, when in none), their size that of the resized group,
+ * stretched as it is (measured on the resized group, so their edges keep their distance to its edges).
+ * groups: [{ key, name, parts, sized }] (sized: the group has sizes to make); geo, stats, axes as slabPlan.
+ * Returns [{ key, name, parts, look, lead, follows, minY, hold }]: look = key of the group whose material
+ * it shows (null: original look), lead = key of the group whose size it takes (null: none), follows =
+ * lead for followers, minY / hold for the stretch (model units; see stretchFor / stretchGeometry).
+ * Groups left without parts are left out.
+ */
+export function outputPieces(groups, geo, stats, axes) {
+  const owner = new Map();
+  for (const g of groups) for (const p of g.parts) owner.set(p, g);
+  const sized = groups.filter((g) => g.sized && g.parts.length);
+  const fixed = sized.flatMap((g) => g.parts), taken = new Set();
+  const extra = [], plans = new Map();
+  for (const L of sized) {
+    const plan = slabPlan(geo, stats, L.parts, axes, [...fixed, ...taken]);
+    plans.set(L.key, plan);
+    const by = new Map();
+    for (const { id, minY } of plan.followers) {
+      taken.add(id);
+      const o = owner.get(id) || null, k = `${o ? o.key : 'rest'}${minY === null ? '' : '|band'}`;
+      if (!by.has(k)) by.set(k, { o, minY, parts: [] });
+      by.get(k).parts.push(id);
+    }
+    for (const [k, { o, minY, parts }] of by)
+      extra.push({ key: `${L.key}~${k}`, name: o ? o.name : L.name, parts, look: o ? o.key : null, lead: L.key, follows: L.key, minY, hold: plan.hold });
+  }
+  const own = groups.map((g) => {
+    const plan = plans.get(g.key);
+    return { key: g.key, name: g.name, parts: g.parts.filter((p) => !taken.has(p)), look: g.key, lead: g.sized ? g.key : null, minY: null, hold: plan?.underside ? plan.hold : null };
+  });
+  return [...own.filter((x) => x.parts.length), ...extra];
+}
+
+/** A hold of slabPlan (model units, from the centre) in metres for stretchFor. */
+export const holdWith = (hold, xf) => (hold ? hold.map((h, k) => h * Math.abs(xf.scale[k])) : null);
+/** A height in model units in the output frame (metres). */
+export const yWith = (y, xf) => (y === null || y === undefined ? -Infinity : y * xf.scale[1] + xf.offset[1]);
 
 /** "1800×900, 2000x1000, 2200" -> [{ w: 1800, d: 900 }, { w: 2000, d: 1000 }, { w: 2200, d: null }] */
 export function parseSizes(text) {

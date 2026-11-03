@@ -6,9 +6,10 @@ import { Viewer } from './viewer.js';
 import { forgetSwatches, forgetTextures, makeThreeMaterial, swatch } from './materials.js';
 import { canvasBlob, drawLitTiles, glossToSurface, KINDS, processPhoto, rulerFor } from './photo.js';
 import * as store from './store.js';
-import { colorLabel, tileUV } from '../core/skin.js';
+import { colorLabel, isGlossy, tileUV, uvFor } from '../core/skin.js';
 import {
-  bboxWith, extentOf, outputTransform, parseSizes, sizeLabel, sizeWith, stretchFor, stretchGeometry, swapAxes,
+  bboxWith, extentOf, holdWith, outputPieces, outputTransform, parseSizes, sizeLabel, sizeWith, stretchFor, stretchGeometry,
+  swapAxes, yWith,
 } from '../core/size.js';
 
 /* global __VERSION__ */
@@ -94,6 +95,8 @@ const S = {
   liftMm: 10,
   colors: [], results: [], resultNote: '', exporting: false, confirmReseg: false, moreOpen: false, exportMoreOpen: false,
   workKey: null, resumed: null,
+  // the parts that resize along with a resized group (a table top's underside), shown as pieces of their own
+  pieces: [], pieceSig: '', followers: new Map(),
 };
 const activeGroup = () => S.groups.find((g) => g.key === S.active) || null;
 const groupOfPart = (i) => S.groups.find((g) => g.parts.includes(i)) || null;
@@ -311,6 +314,10 @@ function refreshStyles() {
   // '원본 보기': the model as it came, to compare with the chosen materials and sizes
   const compare = S.compare && S.view === 'material';
   $('#compareBadge').hidden = !compare;
+  // parts drawn by a piece of their own (a group's material or size, or resizing along with a group)
+  const replaced = new Set();
+  for (const g of S.groups) if (g.skinShown) for (const p of ownParts(g)) replaced.add(p);
+  for (const p of followerPieces()) if (S.followers.get(p.key)?.skinShown) for (const q of p.parts) replaced.add(q);
   const styles = S.parts.map((_, i) => {
     const g = groupOfPart(i);
     const sel = S.selection.has(i);
@@ -321,7 +328,7 @@ function refreshStyles() {
       if (hov) overlay = overlay ? { color: overlay.color, opacity: 0.88 } : { color: '#ffffff', opacity: 0.5 };
       return { base: 'clay', overlay };
     }
-    const skinned = !!(g && g.skinShown) && !compare;
+    const skinned = replaced.has(i) && !compare;
     let overlay = null;
     if (sel) overlay = { color: SEL_COLOR, opacity: 0.5 };
     else if (hov && !skinned) overlay = { color: '#ffffff', opacity: 0.3 };
@@ -332,13 +339,18 @@ function refreshStyles() {
     viewer.setSkinVisible(g.key, S.view === 'material' && g.skinShown && !compare);
     viewer.setSkinHighlight(g.key, S.view === 'material' && !compare && hoverGroup === g);
   }
+  for (const p of followerPieces()) {
+    const on = !!S.followers.get(p.key)?.skinShown;
+    viewer.setSkinVisible(p.key, S.view === 'material' && on && !compare);
+    viewer.setSkinHighlight(p.key, S.view === 'material' && !compare && !!hoverGroup && (hoverGroup.key === p.look || hoverGroup.key === p.lead));
+  }
   // the dimension lines measure what is shown: original parts that are not replaced + the replacements
   const shown = styles.map((st, i) => (st.base === 'hidden' ? -1 : i)).filter((i) => i >= 0);
   if (shown.length) {
     const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
     for (const p of shown) for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], S.parts[p].min[k]); max[k] = Math.max(max[k], S.parts[p].max[k]); }
     viewer.setBaseBox(bboxWith({ min, max }, currentXf()));
-  } else viewer.setBaseBox(null);
+  } else viewer.setBaseBox(S.parts.length ? 'none' : null);
   renderLegend();
 }
 
@@ -393,6 +405,7 @@ async function openFile(file) {
     await viewer.loadModel(buf, res.info.sources);
     console.info('열기 시간(ms)', JSON.stringify(res.timings), '화면', Math.round(performance.now() - tView));
     for (const g of S.groups) viewer.setSkin(g.key, null);
+    clearFollowers();
     Object.assign(S, {
       file: { name: file.name, size: file.size, base: file.name.replace(/\.glb$/i, '') },
       info: res.info, parts: seg.parts, faceLabels: seg.faceLabels, welded: res.welded, sensitivity, segSensitivity: sensitivity,
@@ -445,6 +458,7 @@ async function resegment() {
     const threshold = 165 - S.sensitivity;
     const res = await call('segment', { threshold, color: S.segColor, base: S.segBase });
     for (const g of S.groups) viewer.setSkin(g.key, null);
+    clearFollowers();
     Object.assign(S, {
       parts: res.parts, faceLabels: res.faceLabels, selection: new Set(), groups: [], active: null, segKey: S.segKey + 1, confirmReseg: false,
       segSensitivity: S.sensitivity, segColorUsed: S.segColor, segBaseUsed: S.segBase, cuts: [], cut: null, resumed: null,
@@ -722,6 +736,7 @@ async function resetWork() {
     '만든 그룹과 고른 재질·색·크기가 모두 빠져요. 사진으로 만든 재질과 저장한 색은 그대로 남아요.', '처음부터');
   if (!ok) return;
   for (const g of S.groups) viewer.setSkin(g.key, null);
+  clearFollowers();
   Object.assign(S, { groups: [], active: null, selection: new Set(), resumed: null, results: [], resultNote: '' });
   refreshAll();
   saveWorkNow();
@@ -820,50 +835,115 @@ function applySize() {
 // ---------- previews ----------
 
 const previewCache = new Map();
-function previewGeo(g, size) {
+// gloss: the material has a glossy finish (core/skin isGlossy), whose parts are evened out as in the export
+function previewGeo(parts, size, fit = null, gloss = false) {
   const q = QUALITY[S.quality];
   const xf = currentXf(), sz = size ? { w: size.w, d: size.d } : null;
-  const key = JSON.stringify([S.segKey, g.parts, q.simplify, xf, sz, S.axes]);
+  const { box = null, hold = null, minY = null } = fit || {};
+  const key = JSON.stringify([S.segKey, parts, q.simplify, xf, sz, box, hold, minY, S.axes, !!gloss]);
   if (!previewCache.has(key)) {
     if (previewCache.size > 16) previewCache.delete(previewCache.keys().next().value);
-    previewCache.set(key, call('preview', { parts: g.parts, simplify: q.simplify, xf, size: sz, axes: S.axes }));
+    previewCache.set(key, call('preview', { parts, simplify: q.simplify, xf, size: sz, sizeBox: box, hold, minY: Number.isFinite(minY) ? minY : null, axes: S.axes, gloss: !!gloss }));
   }
   return previewCache.get(key);
 }
+/** How a piece is stretched when lead is resized, in metres: the box it is measured on, the structure that stays, the band. */
+function pieceFit(piece, lead) {
+  const xf = currentXf();
+  return { box: groupBox(lead), hold: holdWith(piece.hold, xf), minY: yWith(piece.minY, xf) };
+}
 const activeSize = (g) => g.sizes.find((z) => z.id === g.activeSize) || null;
+const activeGroups = () => S.groups.filter((g) => g.choices.length || g.sizes.length);
 
+/**
+ * The groups as they are written (core/size outputPieces): each group's own parts, and as pieces of
+ * their own the parts that resize along with a resized group (the underside or lower layer of a table
+ * top). Worked out again when the groups change; then every preview is brought in line.
+ */
+function screenPieces() {
+  const active = activeGroups();
+  const sig = JSON.stringify([S.segKey, S.axes, active.map((g) => [g.key, g.parts, g.sizes.length > 0])]);
+  if (S.pieceSig !== sig) {
+    const changed = S.pieceSig !== '';
+    S.pieceSig = sig;
+    S.pieces = S.parts.length ? outputPieces(active.map((g) => ({ key: g.key, name: g.name, parts: g.parts, sized: g.sizes.length > 0 })),
+      { pos: S.welded.pos, index: S.welded.index, faceLabels: S.faceLabels }, S.parts, S.axes) : [];
+    for (const [key, st] of S.followers)
+      if (!S.pieces.some((p) => p.follows && p.key === key)) { st.token++; viewer.setSkin(key, null); S.followers.delete(key); }
+    if (changed) Promise.resolve().then(() => { for (const g of S.groups) updatePreview(g); });
+  }
+  return S.pieces;
+}
+const ownPiece = (g) => screenPieces().find((p) => p.key === g.key && !p.follows) || { key: g.key, parts: g.parts, hold: null, minY: null };
+const ownParts = (g) => ownPiece(g).parts;
+const followerPieces = () => screenPieces().filter((p) => p.follows);
+const followerState = (p) => {
+  if (!S.followers.has(p.key)) S.followers.set(p.key, { token: 0, skinShown: false });
+  return S.followers.get(p.key);
+};
+/** Parts that resize with g when it is resized (for the panel). */
+const followersOf = (g) => followerPieces().filter((p) => p.lead === g.key).flatMap((p) => p.parts);
+
+/** Drop the pieces that resized along with groups (a new model, new parts or work cleared). */
+function clearFollowers() {
+  for (const [key, st] of S.followers) { st.token++; viewer.setSkin(key, null); }
+  S.followers.clear();
+  S.pieces = [];
+  S.pieceSig = '';
+}
+
+/** Bring a group's preview up to date, and the pieces that go with it (as their size or their look). */
 async function updatePreview(g) {
-  const token = ++g.token;
-  const choice = g.choices.find((c) => c.id === g.active) || null;
-  const size = activeSize(g);
-  if ((!choice && !size) || !S.parts.length) {
-    viewer.setSkin(g.key, null);
-    g.skinShown = false;
+  const jobs = [showPiece(g, { piece: ownPiece(g), look: g, lead: g })];
+  for (const p of followerPieces())
+    if (p.lead === g.key || p.look === g.key) jobs.push(showFollower(p));
+  await Promise.all(jobs);
+}
+function showFollower(p) {
+  const st = followerState(p);
+  return showPiece(st, { piece: p, look: S.groups.find((x) => x.key === p.look) || null, lead: S.groups.find((x) => x.key === p.lead) || null });
+}
+
+/**
+ * Show some parts with the material chosen in look (null: their own look) at the size chosen in lead,
+ * stretched as lead is (null: no resizing). st keeps the request number and whether the piece is on.
+ */
+async function showPiece(st, { piece, look, lead }) {
+  const { key, parts } = piece;
+  const token = ++st.token;
+  const live = () => token === st.token && (st === look ? S.groups.includes(look) : S.followers.get(key) === st);
+  const choice = look ? look.choices.find((c) => c.id === look.active) || null : null;
+  const size = lead ? activeSize(lead) : null;
+  if ((!choice && !size) || !S.parts.length || !parts.length) {
+    viewer.setSkin(key, null);
+    st.skinShown = false;
     refreshStyles();
     return;
   }
+  // the stretch is measured on the resized group, the same for its own parts and those that go with it
+  const fit = size ? pieceFit(piece, lead) : null;
+  const stretch = size ? stretchFor(fit.box, S.axes, size, { hold: fit.hold }) : null;
+  const shape = JSON.stringify([S.segKey, parts, currentXf(), size?.w ?? null, size?.d ?? null, fit]);
+  const resize = (P, N) => { if (stretch) stretchGeometry(P, N, stretch, fit.minY); };
   try {
     if (choice && materialById(choice.materialId)?.recolor) {
       // the parts' own triangles and texture (resized when a size is chosen), in the new colour
-      const st = size ? stretchFor(groupBox(g), S.axes, size) : null;
-      const orig = await groupOriginal(g);
-      if (token !== g.token || !S.groups.includes(g)) return;
-      viewer.setResizedOriginal(g.key, g.parts, (P, N) => { if (st) stretchGeometry(P, N, st); },
-        JSON.stringify([S.segKey, g.parts, currentXf(), size?.w ?? null, size?.d ?? null]), g.parts[0]);
-      viewer.setRecolor(g.key, recolorFor(choice.color?.hex, orig));
+      const orig = await groupOriginal(look);
+      if (!live()) return;
+      viewer.setResizedOriginal(key, parts, resize, shape, parts[0]);
+      viewer.setRecolor(key, recolorFor(choice.color?.hex, orig));
     } else if (choice) {
       const def = materialById(choice.materialId);
-      const [geo, mat] = await Promise.all([previewGeo(g, size), makeThreeMaterial(def, choice.color, getBlob, viewer.maxAnisotropy())]);
-      if (token !== g.token || !S.groups.includes(g)) { mat.dispose(); return; }
-      viewer.setSkin(g.key, geo, mat, g.parts[0]);
-      viewer.setSkinUV(g.key, tileUV(geo.uv, def, g.rotate));
+      const [geo, mat] = await Promise.all([previewGeo(parts, size, fit, isGlossy(def)), makeThreeMaterial(def, choice.color, getBlob, viewer.maxAnisotropy())]);
+      if (!live()) { mat.dispose(); return; }
+      viewer.setSkin(key, geo, mat, parts[0]);
+      viewer.setSkinUV(key, tileUV(uvFor(geo, def), def, look.rotate));
     } else {
       // original look, resized: done on the screen side from the loaded model
-      const st = stretchFor(groupBox(g), S.axes, size);
-      viewer.setResizedOriginal(g.key, g.parts, (P, N) => stretchGeometry(P, N, st), JSON.stringify([S.segKey, g.parts, currentXf(), size.w, size.d]), g.parts[0]);
-      viewer.setRecolor(g.key, null);
+      viewer.setResizedOriginal(key, parts, resize, shape, parts[0]);
+      viewer.setRecolor(key, null);
     }
-    g.skinShown = true;
+    st.skinShown = true;
     refreshStyles();
   } catch (e) {
     console.error(e);
@@ -874,8 +954,17 @@ async function updatePreview(g) {
 function refreshUVs(only = null) {
   for (const g of only ? [only] : S.groups) {
     const choice = g.choices.find((c) => c.id === g.active);
-    if (!choice || !g.skinShown || materialById(choice.materialId)?.recolor) continue;
-    previewGeo(g, activeSize(g)).then((geo) => viewer.setSkinUV(g.key, tileUV(geo.uv, materialById(choice.materialId), g.rotate)));
+    if (!choice || materialById(choice.materialId)?.recolor) continue;
+    const def = materialById(choice.materialId);
+    const size = activeSize(g);
+    if (g.skinShown) previewGeo(ownParts(g), size, size ? pieceFit(ownPiece(g), g) : null, isGlossy(def)).then((geo) => viewer.setSkinUV(g.key, tileUV(uvFor(geo, def), def, g.rotate)));
+    // pieces of g that resize with another group show g's pattern too
+    for (const p of followerPieces()) {
+      const lead = S.groups.find((x) => x.key === p.lead), fs = S.followers.get(p.key);
+      if (p.look !== g.key || !lead || !fs?.skinShown) continue;
+      const ls = activeSize(lead);
+      previewGeo(p.parts, ls, ls ? pieceFit(p, lead) : null, isGlossy(def)).then((geo) => viewer.setSkinUV(p.key, tileUV(uvFor(geo, def), def, g.rotate)));
+    }
   }
 }
 
@@ -1185,7 +1274,8 @@ function sizeArea(g) {
         <span class="mono">${esc(sizeLabel(z, cur))}</span>
         <button class="x" type="button" data-action="size-remove" data-id="${z.id}" aria-label="빼기">×</button></span>`).join('')}
       ${g.sizes.some((z) => Math.round(z.w) === Math.round(cur.w) && Math.round(z.d ?? cur.d) === Math.round(cur.d)) ? ''
-        : `<button class="chip plain" type="button" data-action="size-add-current">＋ 지금 크기 (${fmtInt(cur.w)}×${fmtInt(cur.d)})</button>`}</div>`;
+        : `<button class="chip plain" type="button" data-action="size-add-current">＋ 지금 크기 (${fmtInt(cur.w)}×${fmtInt(cur.d)})</button>`}</div>
+    ${g.sizes.length && followersOf(g).length ? `<p class="note">‘${esc(g.name)}’에 붙은 아랫면·아래층 ${followersOf(g).length}개도 같은 크기로 같이 바뀌어요. 다리와 프레임은 그대로예요.</p>` : ''}`;
 }
 
 function hydrateSwatches(root) {
@@ -1452,7 +1542,6 @@ async function runExport(kind) {
   if (!compressOnly && !count) return;
   const q = QUALITY[S.quality];
   const base = S.prefix || S.file.base;
-  const groups = compressOnly ? [] : active.map((g) => ({ key: g.key, name: g.name, parts: g.parts }));
   // every combination: one option (a material or the original look, × a size) per group
   const plan = compressOnly ? [[]] : cartesian(active.map((g) => optionsOf(g).map((o) => ({ g, ...o }))));
   const variants = plan.map((combo) => combo.map(({ g, choice, size }) => {
@@ -1462,6 +1551,22 @@ async function runExport(kind) {
       def = rest;
     }
     return { group: g.key, def, color: choice?.color || null, rotate: g.rotate, size: size ? { w: size.w, d: size.d } : null };
+  }));
+  // what is written: the groups' own parts, and the parts that resize along with a resized group as
+  // pieces of their own (their group's look, the resized group's size, stretched as it is)
+  const pieces = compressOnly ? [] : outputPieces(active.map((g) => ({ key: g.key, name: g.name, parts: g.parts, sized: g.sizes.length > 0 })),
+    { pos: S.welded.pos, index: S.welded.index, faceLabels: S.faceLabels }, S.parts, S.axes);
+  const byKey = new Map(active.map((g) => [g.key, g]));
+  const groups = pieces.map((p) => {
+    const fit = p.lead ? pieceFit(p, byKey.get(p.lead)) : null;
+    return {
+      key: p.key, name: p.name, parts: p.parts, colorFrom: p.look ? byKey.get(p.look).parts : null,
+      sizeBox: fit?.box || null, hold: fit?.hold || null, minY: Number.isFinite(fit?.minY) ? fit.minY : null,
+    };
+  });
+  const pieceVariants = variants.map((v) => pieces.map((p) => {
+    const look = v.find((c) => c.group === p.look), lead = v.find((c) => c.group === p.lead);
+    return { group: p.key, def: look?.def || null, color: look?.color || null, rotate: look?.rotate || 0, size: lead?.size || null };
   }));
   const used = new Set();
   const names = variants.map((v) => {
@@ -1495,7 +1600,7 @@ async function runExport(kind) {
     }
     busy('준비 중', 0);
     const textures = {};
-    for (const v of variants)
+    for (const v of pieceVariants)
       for (const c of v)
         for (const p of Object.values(c.def?.maps || {}))
           if (!textures[p]) textures[p] = new Uint8Array(await (await getBlob(p)).arrayBuffer());
@@ -1503,7 +1608,7 @@ async function runExport(kind) {
     const res = await call('export', {
       names, xf: currentXf(), axes: S.axes, app: `가구 스킨 스튜디오 ${VERSION}`, avoidSizes: savedSizes,
       quality: { simplify: q.simplify, keepSimplify: q.keepSimplify }, keptTextureSize: S.keptTex,
-      meshopt: !S.compat, compat: S.compat, liftMm: S.liftMm, groups, variants, textures,
+      meshopt: !S.compat, compat: S.compat, liftMm: S.liftMm, groups, variants: pieceVariants, textures,
     }, {
       onProgress: (p) => busy(p.text, p.frac),
       onFile: (f) => {
@@ -2413,4 +2518,4 @@ bindDrop($('#photoDrop'), loadPhoto);
   refreshAll();
 })();
 
-window.__studio = { S, openFile, runExport, viewer, newGroup, addChoice, updatePreview, setActive, call, saveWorkNow, setCompare, refreshAll, savePrefs, renderExport, qcReport, variantName, materialById, setPatternAngle, openEditDialog, savePhotoMaterial, tileUV, currentXf, store };
+window.__studio = { S, openFile, runExport, viewer, newGroup, addChoice, updatePreview, setActive, call, saveWorkNow, setCompare, refreshAll, savePrefs, renderExport, qcReport, variantName, materialById, setPatternAngle, openEditDialog, savePhotoMaterial, tileUV, currentXf, store, followersOf };

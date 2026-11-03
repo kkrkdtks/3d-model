@@ -81,8 +81,9 @@ function removeIslands(pos, index, fn, cls, nbr, unitsToMeters, minArea = 0.0005
  * @param {Float32Array} nrm welded smooth normals
  * @param {Uint32Array} index triangles
  * @param {number} unitsToMeters model units -> metres
- * @returns {{position:Float32Array, normal:Float32Array, uv:Float32Array, index:Uint32Array}}
- *   unwelded only where the projection axis changes; uv in metres
+ * @returns {{position:Float32Array, normal:Float32Array, uv:Float32Array, uvFold:Float32Array, index:Uint32Array}}
+ *   unwelded only where the projection axis changes; uv in metres, image up = world up on every side;
+ *   uvFold the top's pattern folded down over the edges of the part's box onto the sides (see core/skin uvFor)
  */
 export function boxUV(pos, nrm, index, unitsToMeters, smoothIters = 3) {
   const nf = index.length / 3;
@@ -122,9 +123,17 @@ export function boxUV(pos, nrm, index, unitsToMeters, smoothIters = 3) {
     cls.set(next);
   }
   removeIslands(pos, index, fn, cls, nbr, unitsToMeters);
+  // the box the folded UVs turn over: its top edges are where a side meets the top
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < pos.length; i += 3)
+    for (let k = 0; k < 3; k++) {
+      const v = pos[i + k] * unitsToMeters;
+      if (v < lo[k]) lo[k] = v;
+      if (v > hi[k]) hi[k] = v;
+    }
   // unweld per (vertex, class)
   const remap = new Map();
-  const outPos = [], outNrm = [], outUv = [], outIdx = new Uint32Array(index.length);
+  const outPos = [], outNrm = [], outUv = [], outFold = [], outIdx = new Uint32Array(index.length);
   for (let f = 0; f < nf; f++) {
     const k = cls[f];
     for (let c = 0; c < 3; c++) {
@@ -147,9 +156,20 @@ export function boxUV(pos, nrm, index, unitsToMeters, smoothIters = 3) {
           default: u = -x; w = -y;
         }
         outUv.push(u, w);
+        // the top's pattern folded down over its edges, as on a board or a stone slab whose grain carries
+        // over the edge: it runs on along each side the way it runs on the top, and meets the top's where
+        // the side turns into it (so a wavy rim does not show the seam as teeth)
+        switch (k) {
+          case 0: outFold.push(hi[0] + hi[1] - y, z); break;
+          case 1: outFold.push(lo[0] - hi[1] + y, z); break;
+          case 4: outFold.push(x, hi[2] + hi[1] - y); break;
+          case 5: outFold.push(x, lo[2] - hi[1] + y); break;
+          case 2: outFold.push(x, z); break;
+          default: outFold.push(u, w);
+        }
       }
       outIdx[f * 3 + c] = ni;
     }
   }
-  return { position: new Float32Array(outPos), normal: new Float32Array(outNrm), uv: new Float32Array(outUv), index: outIdx, classes: cls };
+  return { position: new Float32Array(outPos), normal: new Float32Array(outNrm), uv: new Float32Array(outUv), uvFold: new Float32Array(outFold), index: outIdx, classes: cls };
 }

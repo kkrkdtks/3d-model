@@ -320,12 +320,15 @@ export class Viewer {
     this.dirty = true;
   }
 
-  /** Box (metres) of the original parts still shown; the screen knows which parts are replaced. */
+  /**
+   * Box (metres) of the original parts still shown; the screen knows which parts are replaced.
+   * 'none': every part is replaced (only the re-skinned and resized pieces count); null: not known (all of it).
+   */
   setBaseBox(b) {
-    const key = b ? [...b.min, ...b.max].map((v) => v.toFixed(5)).join(',') : '';
+    const key = b === 'none' ? 'none' : b ? [...b.min, ...b.max].map((v) => v.toFixed(5)).join(',') : '';
     if (key === this.baseBoxKey) return;
     this.baseBoxKey = key;
-    this.baseBox = b ? new THREE.Box3(new THREE.Vector3(...b.min), new THREE.Vector3(...b.max)) : null;
+    this.baseBox = b === 'none' ? new THREE.Box3() : b ? new THREE.Box3(new THREE.Vector3(...b.min), new THREE.Vector3(...b.max)) : null;
     this.updateDimensions();
   }
 

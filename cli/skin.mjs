@@ -15,10 +15,10 @@ import sharp from 'sharp';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
-  analyze, applyToGroup, colorLabel, compressKeptTextures, createMaterial, encodeVariant, facesOfParts, groupPrimitive,
+  analyze, applyToGroup, colorLabel, compressKeptTextures, createMaterial, encodeVariant, facesOfParts, groupPrimitive, isGlossy,
   plainFloats, prepareOutput, releaseSource, resolveChoice, setVariant, stampGlb, DEFAULTS,
 } from '../core/skin.js';
-import { bboxWith, extentOf, outputTransform, sizeLabel, sizeWith, swapAxes } from '../core/size.js';
+import { bboxWith, extentOf, holdWith, outputPieces, outputTransform, sizeLabel, sizeWith, swapAxes, yWith } from '../core/size.js';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const LIB_DIR = path.join(ROOT, 'materials');
@@ -114,8 +114,8 @@ function realSize(job, a) {
   return outputTransform(a.bbox, a.axes, size);
 }
 
-/** Current W × D (mm) of the faces in parts. */
-function partSizeMm(a, xf, parts) {
+/** Box (metres, output frame) of the faces in parts. */
+function partBox(a, xf, parts) {
   const { pos, index } = a.welded;
   const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
   for (const f of facesOfParts(a.faceLabels, parts))
@@ -123,7 +123,11 @@ function partSizeMm(a, xf, parts) {
       const v = index[f * 3 + c] * 3;
       for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], pos[v + k]); max[k] = Math.max(max[k], pos[v + k]); }
     }
-  const ext = extentOf(bboxWith({ min, max }, xf));
+  return bboxWith({ min, max }, xf);
+}
+/** Current W × D (mm) of the faces in parts. */
+function partSizeMm(a, xf, parts) {
+  const ext = extentOf(partBox(a, xf, parts));
   return { w: ext[a.axes.w] * 1000, d: ext[a.axes.d] * 1000 };
 }
 
@@ -137,7 +141,8 @@ function optionsOf(g, key) {
   return mats.flatMap((choice) => sizes.map((s) => ({ key, group: g, choice, size: s ? { w: s.w ?? null, d: s.d ?? null } : null })));
 }
 
-const optKey = (o) => `${o.key}|${o.choice ? 'skin' : 'keep'}|${o.size ? `${o.size.w ?? ''}x${o.size.d ?? ''}` : ''}`;
+// o.gloss: the chosen material has a glossy finish (core/skin isGlossy), built with the surface evened out
+const optKey = (o) => `${o.key}|${o.choice ? (o.gloss ? 'gloss' : 'skin') : 'keep'}|${o.size ? `${o.size.w ?? ''}x${o.size.d ?? ''}` : ''}`;
 
 async function cmdRun(jobPath) {
   const job = JSON.parse(await fs.readFile(jobPath, 'utf8'));
@@ -161,34 +166,48 @@ async function cmdRun(jobPath) {
   console.log(`저장 크기: W ${Math.round(real.w)} × D ${Math.round(real.d)} × H ${Math.round(real.h)} mm (미터 단위, 바닥 가운데 기준)`);
 
   const quality = { ...DEFAULTS, ...(job.quality || {}) };
-  const groups = job.groups.map((g, i) => ({ key: `g${i}`, name: g.name, parts: g.parts }));
+  const groups = job.groups.map((g, i) => ({ key: `g${i}`, name: g.name, parts: g.parts, sized: !!g.sizes?.length }));
   const options = job.groups.map((g, i) => optionsOf({ ...g, key: groups[i].key }, groups[i].key));
-  const ctx = prepareOutput(doc, a, xf, groups, quality);
+  // as the app: parts that make one slab with a resized group (its underside) go along as pieces of their own
+  const pieces = outputPieces(groups, { pos: a.welded.pos, index: a.welded.index, faceLabels: a.faceLabels }, a.parts, a.axes);
+  const pieceGroups = pieces.map((p) => {
+    const lead = p.lead ? groups.find((g) => g.key === p.lead) : null;
+    return { key: p.key, name: p.name, parts: p.parts, sizeBox: lead ? partBox(a, xf, lead.parts) : null, hold: holdWith(p.hold, xf), minY: p.minY === null ? null : yWith(p.minY, xf) };
+  });
+  const pieceOptions = (combo) => pieces.map((p) => {
+    const look = combo.find((o) => o.key === p.look), lead = combo.find((o) => o.key === p.lead);
+    const choice = look?.choice || null;
+    return { key: p.key, group: look?.group || null, choice, size: lead?.size || null, gloss: !!choice && isGlossy(lib.materials.find((m) => m.id === choice.material)) };
+  });
+  const ctx = prepareOutput(doc, a, xf, pieceGroups, quality);
   const built = new Map();
-  for (const o of options.flat())
-    if (!built.has(optKey(o))) built.set(optKey(o), groupPrimitive(ctx, groups.find((g) => g.key === o.key), { reskin: !!o.choice, size: o.size }));
+  const variants = options.reduce((acc, list) => acc.flatMap((combo) => list.map((o) => [...combo, o])), [[]]);
+  for (const combo of variants)
+    for (const o of pieceOptions(combo))
+      if (!built.has(optKey(o))) built.set(optKey(o), groupPrimitive(ctx, pieceGroups.find((g) => g.key === o.key), { reskin: !!o.choice, size: o.size, gloss: o.gloss }));
   releaseSource(ctx);
   console.log(`형상 정리 (${Date.now() - t}ms)`); t = Date.now();
   await compressKeptTextures(doc, (b, m, s) => encodeTexture(b, m, s), quality.keptTextureSize);
   console.log(`원본 텍스처 압축 (${Date.now() - t}ms)`);
 
-  const variants = options.reduce((acc, list) => acc.flatMap((combo) => list.map((o) => [...combo, o])), [[]]);
   const cache = new Map();
   const results = [], used = new Set(), sizesMade = new Set();
   for (const combo of variants) {
-    const parts = combo.map((o) => built.get(optKey(o)));
+    const opts = pieceOptions(combo);
+    const parts = opts.map((o) => built.get(optKey(o)));
     setVariant(ctx, parts);
-    const made = [], labels = [];
-    for (let k = 0; k < combo.length; k++) {
-      const o = combo[k];
-      let look = '';
-      if (o.choice && parts[k]) {
-        const resolved = resolveChoice(lib, o.choice.material, o.choice.color);
-        const { mat, def, color } = await createMaterial(doc, resolved.def, resolved.color, loadImage, cache);
-        applyToGroup(doc, parts[k], mat, def, { rotate: o.choice.rotate ?? o.group.rotate ?? 0 });
-        made.push(mat);
-        look = [def.name, colorLabel(color)].filter(Boolean).join('-');
-      }
+    const made = [], labels = [], looks = new Map();
+    for (let k = 0; k < opts.length; k++) {
+      const o = opts[k];
+      if (!o.choice || !parts[k]) continue;
+      const resolved = resolveChoice(lib, o.choice.material, o.choice.color);
+      const { mat, def, color } = await createMaterial(doc, resolved.def, resolved.color, loadImage, cache);
+      applyToGroup(doc, parts[k], mat, def, { rotate: o.choice.rotate ?? o.group.rotate ?? 0 });
+      made.push(mat);
+      looks.set(o.group, [def.name, colorLabel(color)].filter(Boolean).join('-'));
+    }
+    for (const o of combo) {
+      const look = looks.get(o.group) || '';
       const size = o.size ? sizeLabel(o.size, partSizeMm(a, xf, o.group.parts)) : '';
       labels.push([o.group.name, size, look].filter(Boolean).map(slug).join('-'));
     }

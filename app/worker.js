@@ -9,7 +9,7 @@ import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import {
   DEFAULTS, applyToGroup, baseColorSource, compressKeptTextures, createMaterial, cutPart, encodeVariant,
-  faceColors, facesOfParts, groupPrimitive, partStats, plainFloats, prepareOutput,
+  faceColors, facesOfParts, GLOSS_FAIR, groupPrimitive, isGlossy, partStats, plainFloats, prepareOutput,
   colorLabel, hexToLinear, releaseSource, reskinGeometry, setVariant, srgbToLinear, stampGlb, triangleSources, weldedSources,
 } from '../core/skin.js';
 import { adjacency, segment, undersideHeight, uniqueEdges, valleyCurvature, vertexColors, vertexNormals } from '../core/segment.js';
@@ -222,20 +222,20 @@ function cut({ part, y }) {
 
 /**
  * Geometry for the live preview of a re-skinned group (same code path as the export):
- * in metres in the output frame (xf), resized when size is given.
+ * in metres in the output frame (xf), resized when size is given, evened out for a glossy finish.
  */
-function preview({ parts, simplify, xf, size, axes }) {
-  const key = JSON.stringify([[...parts].sort((a, b) => a - b), simplify, xf, size, axes]);
+function preview({ parts, simplify, xf, size, sizeBox = null, hold = null, minY = null, axes, gloss = false }) {
+  const key = JSON.stringify([[...parts].sort((a, b) => a - b), simplify, xf, size, sizeBox, hold, minY, axes, !!gloss]);
   let geo = state.previews.get(key);
   if (!geo) {
     const faces = facesOfParts(state.faceLabels, parts);
     // pieces this program wrote were simplified when they were saved: not again (as in the export)
     const made = faces.length > 0 && faces.every((f) => state.made[state.faceSource[f]]);
-    geo = reskinGeometry(state.welded, faces, { simplify: made ? 1 : simplify, xf, size, axes });
+    geo = reskinGeometry(state.welded, faces, { simplify: made ? 1 : simplify, xf, size, sizeBox, hold, minY, axes, gloss: gloss ? GLOSS_FAIR : false });
     if (state.previews.size > 24) state.previews.clear();
     state.previews.set(key, geo);
   }
-  return { position: geo.position.slice(), normal: geo.normal.slice(), uv: geo.uv.slice(), index: geo.index.slice() };
+  return { position: geo.position.slice(), normal: geo.normal.slice(), uv: geo.uv.slice(), uvFold: geo.uvFold.slice(), index: geo.index.slice() };
 }
 
 const LIN = Float32Array.from({ length: 256 }, (_, i) => srgbToLinear(i / 255));
@@ -440,7 +440,9 @@ function outerSizeMm(doc, axes) {
 /**
  * Write one GLB per combination of choices.
  * args: { names, xf, axes, quality: { simplify, keepSimplify }, keptTextureSize, meshopt, compat,
- *         groups: [{ key, name, parts }],
+ *         groups: [{ key, name, parts, sizeBox?, hold?, minY?, colorFrom? }],  (pieces, see core/size outputPieces:
+ *           sizeBox = box in metres the resize is measured on, hold / minY in metres, colorFrom = parts the
+ *           original colour is measured on)
  *         variants: [[{ group, def | null, color, rotate, size: { w, d } | null }]],  (def null = keep the original look)
  *         textures: { path: Uint8Array } }
  * The file is in metres (xf), standing on the floor.
@@ -469,13 +471,14 @@ async function exportVariants(args, progress, sendFile) {
 
   // every option (group × material or original look × size) is built once and reused
   const reskin = (c) => !!c.def && !c.def.recolor;
-  const optKey = (c) => `${c.group}|${reskin(c) ? 'skin' : 'keep'}|${c.size ? `${c.size.w ?? ''}x${c.size.d ?? ''}` : ''}`;
+  const gloss = (c) => reskin(c) && isGlossy(c.def);
+  const optKey = (c) => `${c.group}|${reskin(c) ? (gloss(c) ? 'gloss' : 'skin') : 'keep'}|${c.size ? `${c.size.w ?? ''}x${c.size.d ?? ''}` : ''}`;
   const built = new Map();
   const needed = [...new Map(variants.flat().map((c) => [optKey(c), c])).values()];
   for (let i = 0; i < needed.length; i++) {
     const c = needed[i];
     progress(`부분 모양 만드는 중 ${i + 1}/${needed.length}`, 0.08 + (0.12 * i) / needed.length);
-    built.set(optKey(c), groupPrimitive(ctx, groups.find((g) => g.key === c.group), { reskin: reskin(c), size: c.size }));
+    built.set(optKey(c), groupPrimitive(ctx, groups.find((g) => g.key === c.group), { reskin: reskin(c), size: c.size, gloss: gloss(c) }));
   }
   releaseSource(ctx);
   T.mark('geometry');
@@ -505,7 +508,8 @@ async function exportVariants(args, progress, sendFile) {
     if (!L.mat) return null;
     const key = `${c.group}|${c.color.hex}|${si}`;
     if (!recolored.has(key)) {
-      if (!stats.has(c.group)) stats.set(c.group, groupColor({ parts: groups.find((g) => g.key === c.group).parts }));
+      // measured on the whole group the look comes from (a piece split off for resizing included)
+      if (!stats.has(c.group)) { const g = groups.find((x) => x.key === c.group); stats.set(c.group, groupColor({ parts: g.colorFrom || g.parts })); }
       const st = L.image && (L.slot === 'baseColor' || L.slot === 'emissive') ? stats.get(c.group)?.sources.find((e) => e.source === si) : null;
       const target = hexToLinear(c.color.hex);
       const out = st ? await recolorTexture(L.image.bytes, L.image.mime, target.map((t) => t / Math.max(st.lum, 1e-4)),

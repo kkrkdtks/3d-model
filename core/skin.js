@@ -15,7 +15,7 @@ import {
   KHRMeshQuantization,
 } from '@gltf-transform/extensions';
 import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
-import { segment, smoothNormals, vertexNormals } from './segment.js';
+import { fairSurface, segment, smoothNormals, vertexNormals } from './segment.js';
 import { boxUV } from './uvbox.js';
 import {
   bboxOf, fitToBox, furnitureAxes, mulMat4, stretchFor, stretchGeometry, transformPositions, xfMatrix,
@@ -270,6 +270,30 @@ function compactIndexed(pos, index, nrm = null) {
 // show jagged, broken-looking highlights along edges and rims.
 const NORMAL_WEIGHT = 1;
 
+// Denoising of re-skinned parts with a glossy finish (core/segment fairSurface; metres): faces up to
+// ~37° apart are evened out, no point moves more than 4 mm, the outermost points stay (exact size).
+export const GLOSS_FAIR = { normalIters: 60, vertexIters: 30, threshold: 0.8, maxMove: 0.004, lockBox: 0.0005 };
+
+/**
+ * A finish smooth enough to mirror its surroundings (high-gloss paint, mirror metal, glass): the fine
+ * ripples of a generated surface show on it as wobbly, broken highlights. Its re-skinned parts are
+ * smoothed (GLOSS_FAIR) and the file keeps finer surface directions (encodeVariant).
+ */
+export function isGlossy(def) {
+  if (!def || def.recolor) return false;
+  const cc = def.clearcoat;
+  if (cc && (cc.factor ?? 1) >= 0.5 && (cc.roughness ?? 0.1) <= 0.1) return true;
+  return (def.roughness ?? 1) <= 0.25 && !def.maps?.orm;
+}
+
+/** The same test on a glTF material (as written by createMaterial, or any other). */
+export function glossyMaterial(mat) {
+  if (!mat) return false;
+  const cc = mat.getExtension('KHR_materials_clearcoat');
+  if (cc && cc.getClearcoatFactor() >= 0.5 && cc.getClearcoatRoughnessFactor() <= 0.1 && !cc.getClearcoatRoughnessTexture()) return true;
+  return mat.getRoughnessFactor() <= 0.25 && !mat.getMetallicRoughnessTexture();
+}
+
 /**
  * meshoptimizer simplification on plain arrays (MeshoptSimplifier.ready must have resolved).
  * With nrm (unit normals per vertex) the surface direction is kept too, and the result carries the
@@ -291,18 +315,22 @@ export function simplifyIndexed(pos, index, ratio, error, lockBorder = true, nrm
  * smooth normals and box-projected UVs in metres.
  * Normals come from the full-detail surface, with the ripples of a generated surface smoothed out
  * (real edges stay), and are kept through simplification, so edges and rims shade cleanly instead
- * of following the coarser triangles.
+ * of following the coarser triangles. opts.gloss (true or fairSurface options) also evens out the
+ * surface itself first, for a glossy finish (see isGlossy).
  * Shared by the export and the live preview, so what you see is what gets saved.
  */
 export function reskinGeometry(welded, faces, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const sub = compactIndexed(welded.pos, trianglesOf(welded.index, faces));
   const pos = o.xf ? transformPositions(sub.pos, o.xf) : sub.pos;
-  if (o.size) stretchGeometry(pos, null, stretchFor(bboxOf(pos), o.axes, o.size));
+  // the stretch is measured on opts.sizeBox when given (a follower takes its resized group's stretch)
+  if (o.size) stretchGeometry(pos, null, stretchFor(o.sizeBox || bboxOf(pos), o.axes, o.size, { hold: o.hold }), o.minY ?? -Infinity);
   const box = bboxOf(pos);
+  if (o.gloss) fairSurface(pos, sub.index, o.gloss === true ? GLOSS_FAIR : o.gloss);
   const dense = vertexNormals(pos, sub.index, pos.length / 3);
-  // pieces this app already simplified (o.simplify 1) were smoothed when they were made
-  if (o.smoothNormals && o.simplify < 1) smoothNormals(sub.index, dense, o.smoothNormals);
+  // also on pieces this app made before (o.simplify 1): their normals are worked out again here from
+  // the positions, so the smoothing they had when they were saved has to be done again
+  if (o.smoothNormals) smoothNormals(sub.index, dense, o.smoothNormals);
   const simp = simplifyIndexed(pos, sub.index, o.simplify, o.error, true, dense);
   fitToBox(simp.pos, box);
   return boxUV(simp.pos, simp.nrm, simp.index, 1);
@@ -342,8 +370,8 @@ export function prepareOutput(doc, analysis, xf, groups, opts = {}) {
     const p = s.prim.clone().setIndices(doc.createAccessor().setType('SCALAR').setArray(trianglesOf(s.index, faces)).setBuffer(buffer));
     compactPrimitive(p);
     transformPrimitive(p, s.A);
-    if (!s.made) simplifyKept(p, o);
-    p.setExtras({ group: 'rest' });
+    const fine = keptNormals(p, s, o);
+    p.setExtras({ group: 'rest', ...(fine ? { normals: 'fine' } : {}) });
     rest.push(p);
   }
   // whatever else is in the file (lines, points: rare) and all node transforms -> plain metres at the scene root
@@ -370,24 +398,27 @@ export function prepareOutput(doc, analysis, xf, groups, opts = {}) {
  * Geometry of one group for one variant option.
  * reskin: new welded geometry with metre UVs for a tiling material; otherwise the original
  * triangles with their own texture (one primitive per source primitive they come from).
- * size: { w, d } mm resizes the part (ends keep their shape).
- * Returns { prim, prims, uvMeters? | sources? } (prim = prims[0]).
+ * size: { w, d } mm resizes the part (ends keep their shape), measured on group.sizeBox (metres, in the
+ * output frame) when the group has one: the box of the resized group a follower piece goes with;
+ * group.hold / group.minY (metres) as in core/size stretchFor / stretchGeometry (see slabPlan).
+ * gloss: the new material has a glossy finish (isGlossy): its surface is evened out first.
+ * Returns { prim, prims, uvMeters?, uvFold? | sources? } (prim = prims[0]).
  */
-export function groupPrimitive(ctx, group, { reskin, size = null }) {
+export function groupPrimitive(ctx, group, { reskin, size = null, gloss = false }) {
   const { doc, analysis, xf, buffer, opts } = ctx;
   const faces = selectFaces(analysis.faceLabels, group.parts);
   if (!faces.length) return null;
   const extras = { group: group.name, size: size ? { w: size.w ?? null, d: size.d ?? null } : null };
   if (reskin) {
     const simplify = madeFaces(ctx.sources, faces) ? 1 : opts.simplify;
-    const geo = reskinGeometry(analysis.welded, faces, { ...opts, simplify, xf, size, axes: analysis.axes });
+    const geo = reskinGeometry(analysis.welded, faces, { ...opts, simplify, xf, size, sizeBox: group.sizeBox || null, hold: group.hold || null, minY: group.minY ?? null, axes: analysis.axes, gloss: gloss ? GLOSS_FAIR : false });
     const p = doc.createPrimitive()
       .setAttribute('POSITION', doc.createAccessor().setType('VEC3').setArray(geo.position).setBuffer(buffer))
       .setAttribute('NORMAL', doc.createAccessor().setType('VEC3').setArray(geo.normal).setBuffer(buffer))
       .setAttribute('TEXCOORD_0', doc.createAccessor().setType('VEC2').setArray(geo.uv.slice()).setBuffer(buffer))
       .setIndices(doc.createAccessor().setType('SCALAR').setArray(geo.index).setBuffer(buffer))
-      .setExtras(extras);
-    return { prim: p, prims: [p], uvMeters: geo.uv };
+      .setExtras(gloss ? { ...extras, normals: 'fine' } : extras);
+    return { prim: p, prims: [p], uvMeters: geo.uv, uvFold: geo.uvFold };
   }
   // the parts' own triangles and texture: one primitive per source they come from
   const prims = [], from = [];
@@ -405,21 +436,62 @@ export function groupPrimitive(ctx, group, { reskin, size = null }) {
       const b = bboxOf(p.getAttribute('POSITION').getArray());
       for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], b.min[k]); hi[k] = Math.max(hi[k], b.max[k]); }
     }
-    const st = stretchFor({ min: lo, max: hi }, analysis.axes, size);
+    const st = stretchFor(group.sizeBox || { min: lo, max: hi }, analysis.axes, size, { hold: group.hold });
     if (st)
       for (const p of prims) {
         const pos = p.getAttribute('POSITION'), nrm = p.getAttribute('NORMAL');
         const P = pos.getArray().slice(), N = nrm ? Float32Array.from(nrm.getArray()) : null;
-        stretchGeometry(P, N, st);
+        stretchGeometry(P, N, st, group.minY ?? -Infinity);
         pos.setArray(P);
         if (N) nrm.setArray(N).setNormalized(false);
       }
   }
   prims.forEach((p, i) => {
-    if (!from[i].made) simplifyKept(p, opts);
-    p.setExtras(extras);
+    const fine = keptNormals(p, from[i], opts);
+    p.setExtras(fine ? { ...extras, normals: 'fine' } : extras);
   });
   return { prim: prims[0], prims, sources: from };
+}
+
+/**
+ * A piece that keeps its look: simplified when it comes from the generated model; a glossy piece
+ * this program saved before has its stored normals evened out once (older files kept them coarse,
+ * 8 bits, which a mirror-like finish shows as sparkle). True when the piece's normals are fine
+ * (marked in the file, so a later save leaves them alone).
+ */
+function keptNormals(p, source, o) {
+  if (!source.made) { simplifyKept(p, o); return false; }
+  if (source.prim.getExtras()?.normals === 'fine') return true;
+  if (!glossyMaterial(source.material)) return false;
+  settleNormals(p);
+  return true;
+}
+
+/**
+ * A few passes of edge-keeping smoothing over a primitive's own normals. Vertices split at texture
+ * seams are joined by position for this, so both sides of a seam stay alike.
+ */
+function settleNormals(p, iters = 4) {
+  const P = p.getAttribute('POSITION'), N = p.getAttribute('NORMAL'), I = p.getIndices();
+  if (!N || !I) return;
+  const pos = floatArray(P), nrm = Float32Array.from(floatArray(N)), n = P.getCount();
+  const id = new Int32Array(n), key = new Map();
+  for (let v = 0; v < n; v++) {
+    const k = `${pos[v * 3]},${pos[v * 3 + 1]},${pos[v * 3 + 2]}`;
+    let i = key.get(k);
+    if (i === undefined) key.set(k, (i = key.size));
+    id[v] = i;
+  }
+  const w = new Float32Array(key.size * 3);
+  for (let v = 0; v < n; v++) for (let k = 0; k < 3; k++) w[id[v] * 3 + k] += nrm[v * 3 + k];
+  for (let i = 0; i < w.length; i += 3) {
+    const l = Math.hypot(w[i], w[i + 1], w[i + 2]) || 1;
+    w[i] /= l; w[i + 1] /= l; w[i + 2] /= l;
+  }
+  smoothNormals(Uint32Array.from(I.getArray(), (v) => id[v]), w, iters);
+  for (let v = 0; v < n; v++) for (let k = 0; k < 3; k++) nrm[v * 3 + k] = w[id[v] * 3 + k];
+  // a new accessor: the source's may be shared with other pieces
+  p.setAttribute('NORMAL', N.clone().setArray(nrm).setNormalized(false));
 }
 
 /**
@@ -589,9 +661,20 @@ export function tileUV(uvMeters, def, rotate = 0) {
   return uv;
 }
 
+/**
+ * Wood and stone carry their grain over an edge, as a board or a slab does: on a table top turned so the
+ * grain runs along its length, the long edges show it running along too (with image up = world up on
+ * every side, those edges got it upright, as stripes across a thin rim). Fabric and leather keep
+ * their pattern upright on every side, as upholstery is sewn.
+ */
+export const grainFolds = (def) => !!def && (def.category === '나무' || def.category === '대리석');
+
+/** The metre UVs for a material: geo is a reskinGeometry result ({ uv, uvFold }) or { uvMeters, uvFold }. */
+export const uvFor = (geo, def) => (grainFolds(def) && geo.uvFold) || geo.uv || geo.uvMeters;
+
 /** Point a re-skinned group at a material, scaling its metre UVs to the material's tile size. */
 export function applyToGroup(doc, group, mat, def, opts = {}) {
-  group.prim.getAttribute('TEXCOORD_0').setArray(tileUV(group.uvMeters, def, opts.rotate || 0));
+  group.prim.getAttribute('TEXCOORD_0').setArray(tileUV(uvFor(group, def), def, opts.rotate || 0));
   group.prim.setMaterial(mat);
 }
 
@@ -647,7 +730,11 @@ export async function encodeVariant(io, doc, opts = {}) {
   if (meshopt) {
     await MeshoptEncoder.ready;
     await copy.transform(prune({ keepExtras: true }), reorder({ encoder: MeshoptEncoder }), quantize());
-    copy.createExtension(EXTMeshoptCompression).setRequired(true).setEncoderOptions({ method: EXTMeshoptCompression.EncoderMethod.FILTER });
+    // FILTER stores normals in 8 bits (octahedral), fine for most finishes but visible as sparkle and
+    // broken highlights on a mirror-like one; QUANTIZE keeps them at 10 bits (a few % bigger file)
+    const fine = copy.getRoot().listMaterials().some(glossyMaterial);
+    const method = EXTMeshoptCompression.EncoderMethod[fine ? 'QUANTIZE' : 'FILTER'];
+    copy.createExtension(EXTMeshoptCompression).setRequired(true).setEncoderOptions({ method });
   } else {
     await copy.transform(prune({ keepExtras: true }), quantize());
   }
