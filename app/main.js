@@ -77,6 +77,9 @@ const LIFT_DEFAULT = 10, LIFT_MAX = 100; // mm above the floor in saved files
 const S = {
   file: null, info: null, parts: [], faceLabels: null, welded: null, dims: null, segKey: 0,
   size: { w: null, d: null, h: null }, axes: { w: 2, d: 0, front: 1 }, axesSwapped: false, dimsOn: true,
+  // keep the model's own proportions (one of W / D / H drives a uniform scale, the others follow): stretching
+  // one direction changes shapes such as the angle of slanted table legs. sizeAnchor: the one typed last.
+  sizeLock: true, sizeAnchor: 'h', sizeNote: '',
   sensitivity: DEFAULT_SENSITIVITY, segSensitivity: DEFAULT_SENSITIVITY,
   // also split where the colour changes (a wooden base on fabric), and off the legs or plinth under
   // the body's underside; height cuts made by hand
@@ -400,11 +403,12 @@ async function openFile(file) {
     });
     setCompare(false);
     S.prefix = S.file.base;
-    const saved = work?.size ? { ...work.size, swapped: work.swapped } : await store.getKV(`size:${file.name}`, null);
-    const legacyW = saved ? null : await store.getKV(`width:${file.name}`, null);
-    S.size = { w: saved?.w ?? legacyW ?? null, d: saved?.d ?? null, h: saved?.h ?? null };
+    // the size typed for this very file (name and byte size: 3DAISTUDIO files are often all called Untitled.glb)
+    const saved = work?.size ? { ...work.size, swapped: work.swapped, lock: work.sizeLock, anchor: work.sizeAnchor } : await store.getKV(sizeKey(file), null);
+    S.size = { w: saved?.w ?? null, d: saved?.d ?? null, h: saved?.h ?? null };
     S.axesSwapped = !!saved?.swapped;
     S.axes = S.axesSwapped ? swapAxes(res.axes) : res.axes;
+    S.sizeNote = restoreSizeLock(saved);
     previewCache.clear();
     const tParts = performance.now();
     viewer.setParts(res.welded.pos, res.welded.index, seg.faceLabels, seg.parts.length);
@@ -647,7 +651,7 @@ function workSnapshot() {
     v: 1, saved: Date.now(),
     sensitivity: S.segSensitivity, colorSplit: S.segColorUsed, baseSplit: S.segBaseUsed, cuts: S.cuts, partCount: S.parts.length, partSig: partSig(),
     split: S.groups.length || S.cuts.length ? packSplit() : null,
-    size: { ...S.size }, swapped: S.axesSwapped,
+    size: { ...S.size }, swapped: S.axesSwapped, sizeLock: S.sizeLock, sizeAnchor: S.sizeAnchor,
     groups: S.groups.map((g) => ({
       name: g.name, parts: g.parts, color: g.color, rotate: g.rotate, pick: g.pick,
       choices: g.choices.map((c) => ({ materialId: c.materialId, color: c.color || null })),
@@ -749,8 +753,41 @@ function provisionalH() {
   if (S.size.d) return (S.size.d * ext[1]) / ext[S.axes.d];
   return 800;
 }
+const sizeKey = (f) => `size:${f.name}|${f.size}`;
+const axisOf = (k) => (k === 'h' ? 1 : S.axes[k]);
+/** W / D / H (mm, unrounded) in the model's own proportions from one of them. */
+function proportional(k, v) {
+  const ext = extentOf(S.info.bbox), unit = v / ext[axisOf(k)];
+  return { w: unit * ext[S.axes.w], d: unit * ext[S.axes.d], h: unit * ext[1] };
+}
+/** With the proportions kept: fill the other two boxes from the one typed last. */
+function syncLockedSize() {
+  if (!S.sizeLock || !S.info) return;
+  const v = S.size[S.sizeAnchor];
+  if (!v) { S.size = { w: null, d: null, h: null }; return; }
+  const p = proportional(S.sizeAnchor, v);
+  for (const k of ['w', 'd', 'h']) S.size[k] = k === S.sizeAnchor ? v : Math.round(p[k]);
+}
+/**
+ * The proportion lock for a model just opened, from what was saved for it. Work saved before the lock
+ * existed opens in the model's own proportions, from its H (or W, D), when its W / D had stretched the
+ * shape; the note says so. Returns that note, or ''.
+ */
+function restoreSizeLock(saved) {
+  S.sizeLock = saved?.lock !== false;
+  S.sizeAnchor = ['w', 'd', 'h'].includes(saved?.anchor) ? saved.anchor : S.size.h ? 'h' : S.size.w ? 'w' : S.size.d ? 'd' : 'h';
+  if (!S.sizeLock || saved?.lock === true) { syncLockedSize(); return ''; }
+  // saved before v1.2: was it stretched?
+  const before = { ...S.size };
+  syncLockedSize();
+  const off = ['w', 'd'].filter((k) => before[k] && Math.abs(before[k] / S.size[k] - 1) > 0.015);
+  if (!off.length) return '';
+  return `예전에 넣은 치수(${off.map((k) => `${k.toUpperCase()} ${fmtInt(before[k])}`).join(', ')})가 이 모델의 원래 비율과 달라 모양이 늘어나 있었어요. 이제 원래 비율 그대로 열었어요 (W ${fmtInt(S.size.w)} × D ${fmtInt(S.size.d)} × H ${fmtInt(S.size.h)}). 상판만 다른 크기가 필요하면 3번의 ‘크기 바꾸기’를 쓰세요.`;
+}
 /** Model units -> metres on the floor, from W / D / H. Everything on screen and in the files uses it. */
-const currentXf = () => outputTransform(S.info.bbox, S.axes, { ...S.size, h: S.size.h || provisionalH() });
+const currentXf = () => outputTransform(S.info.bbox, S.axes, S.sizeLock && S.size[S.sizeAnchor]
+  ? { h: proportional(S.sizeAnchor, S.size[S.sizeAnchor]).h } // one uniform scale, exactly
+  : { ...S.size, h: S.size.h || provisionalH() });
 const realSize = () => sizeWith(S.info.bbox, S.axes, currentXf());
 
 /** Bounding box of a group's parts in metres, before any resizing. */
@@ -774,7 +811,8 @@ function applySize() {
   refreshStyles();
   if (S.cut) { renderParts(); showCut(); }
   viewer.frame();
-  if (S.file) store.setKV(`size:${S.file.name}`, { ...S.size, swapped: S.axesSwapped });
+  if (S.file) store.setKV(sizeKey(S.file), { ...S.size, swapped: S.axesSwapped, lock: S.sizeLock, anchor: S.sizeAnchor });
+  saveWorkSoon();
 }
 
 // ---------- previews ----------
@@ -928,9 +966,13 @@ function renderInfo() {
       <div class="size-row">
         <label class="size-in"><span>W 가로</span><input class="input num" id="sizeW" inputmode="numeric" autocomplete="off" value="${S.size.w ?? ''}"></label>
         <label class="size-in"><span>D 깊이</span><input class="input num" id="sizeD" inputmode="numeric" autocomplete="off" value="${S.size.d ?? ''}"></label>
-        <label class="size-in req ${S.size.h ? '' : 'missing'}"><span>H 높이 <b>필수</b></span><input class="input num" id="sizeH" inputmode="numeric" autocomplete="off" value="${S.size.h ?? ''}"></label>
+        <label class="size-in req ${S.size.h ? '' : 'missing'}"><span>H 높이 <b>${S.sizeLock ? '' : '필수'}</b></span><input class="input num" id="sizeH" inputmode="numeric" autocomplete="off" value="${S.size.h ?? ''}"></label>
       </div>
-      <p class="hint">H만 넣으면 비율 그대로 키우고, W·D까지 넣으면 그 치수에 맞게 늘이거나 줄여요. 저장하는 GLB가 이 크기(미터 단위)가 돼요.</p>
+      <label class="check"><input type="checkbox" id="sizeLock" ${S.sizeLock ? 'checked' : ''}>
+        <span>원래 비율 유지 (모양 그대로)<small>${S.sizeLock ? '셋 중 하나만 넣으면 나머지는 모델의 원래 비율대로 채워져요. 다리 각도 같은 모양이 바뀌지 않아요.' : 'W·D·H를 따로 넣으면 모델이 그 방향으로 늘어나거나 줄어요.'}</small></span></label>
+      <p class="warn-text" id="sizeWarn" ${sizeStretch() ? '' : 'hidden'}>${esc(sizeStretch())}</p>
+      ${S.sizeNote ? `<p class="note size-note">${esc(S.sizeNote)}</p>` : ''}
+      <p class="hint">저장하는 GLB가 이 크기(미터 단위)가 돼요. 식탁 상판처럼 한 부분만 다른 크기가 필요하면 비율은 그대로 두고, 3번에서 그 부분을 골라 ‘크기 바꾸기’를 쓰세요. 다리·프레임은 그대로예요.</p>
       <button class="link" type="button" data-action="swap-axes">W와 D 방향이 반대인가요? 서로 바꾸기</button>
     </div>`;
   updateSizeHints();
@@ -942,9 +984,23 @@ function updateSizeHints() {
   const r = realSize();
   for (const [id, k] of [['sizeW', 'w'], ['sizeD', 'd'], ['sizeH', 'h']]) {
     const el = $(`#${id}`);
-    if (el) el.placeholder = k === 'h' && !S.size.h ? '예: 800' : `약 ${fmtInt(r[k])}`;
+    if (!el) continue;
+    el.placeholder = !S.size.h ? (k === 'h' ? '예: 800' : '') : `약 ${fmtInt(r[k])}`;
+    // with the proportions kept, the boxes not being typed in follow
+    if (S.sizeLock && document.activeElement !== el) el.value = S.size[k] ?? '';
   }
   $('#sizeH')?.closest('.size-in')?.classList.toggle('missing', !S.size.h);
+  const warn = $('#sizeWarn'), text = sizeStretch();
+  if (warn) { warn.hidden = !text; warn.textContent = text; }
+}
+
+/** How far W / D typed without the lock stretch the model away from its own proportions (a warning), or ''. */
+function sizeStretch() {
+  if (S.sizeLock || !S.info || !S.size.h) return '';
+  const p = proportional('h', S.size.h);
+  const off = ['w', 'd'].filter((k) => S.size[k] && Math.abs(S.size[k] / p[k] - 1) > 0.015)
+    .map((k) => `${k.toUpperCase()} ${Math.round((S.size[k] / p[k] - 1) * 100) > 0 ? '+' : ''}${Math.round((S.size[k] / p[k] - 1) * 100)}%`);
+  return off.length ? `원래 비율(H ${fmtInt(S.size.h)}이면 W ${fmtInt(p.w)} × D ${fmtInt(p.d)})과 달라서 모델이 ${off.join(', ')} 늘어나거나 줄어요. 비스듬한 다리의 각도나 둥근 모양이 바뀌어요.` : '';
 }
 
 function renderParts() {
@@ -1169,7 +1225,7 @@ function renderExport() {
   el.innerHTML = `${head(4, '내보내기')}
     <div class="summary">${count ? `변형 ${count}개를 만들어요` : '아직 고른 재질이 없어요'}
       <small>${count ? `${active.map((g) => `${esc(g.name)} ${per(g)}`).join(' × ')}${S.groups.length > active.length ? ' · 고르지 않은 그룹은 원본 그대로' : ''}` : '재질이나 크기를 고르면 조합마다 GLB 파일이 하나씩 만들어져요.'}</small></div>
-    ${needH ? '<p class="warn-text">1번에 실제 높이(H)를 넣어야 저장할 수 있어요.</p>'
+    ${needH ? `<p class="warn-text">1번에 실제 크기(${S.sizeLock ? 'W·D·H 중 하나' : '높이 H'})를 넣어야 저장할 수 있어요.</p>`
       : `<p class="note">저장 크기 W ${fmtInt(r.w)} × D ${fmtInt(r.d)} × H ${fmtInt(r.h)}mm${S.groups.some((x) => x.sizes.length) ? ' (크기를 바꾼 부분은 변형마다 그 크기로)' : ''} · 미터 단위, 바닥 가운데 기준${S.liftMm ? ` · 바닥에서 ${fmtInt(S.liftMm)}mm 띄움` : ''}</p>`}
     ${count > 40 ? `<p class="warn-text">파일이 ${count}개예요. 시간이 꽤 걸릴 수 있어요.</p>` : ''}
     <div class="field"><span class="label">압축</span>
@@ -1388,7 +1444,7 @@ async function thumbnail(blob, max, { background, format }) {
 
 async function runExport(kind) {
   if (S.exporting) return;
-  if (!S.size.h) { toast('1번에 실제 높이(H)를 넣어 주세요.'); $('#sizeH')?.focus(); return; }
+  if (!S.size.h) { toast(S.sizeLock ? '1번에 실제 크기(W·D·H 중 하나)를 넣어 주세요.' : '1번에 실제 높이(H)를 넣어 주세요.'); $('#sizeH')?.focus(); return; }
   const compressOnly = kind === 'compress';
   const { active, count } = variantPlan();
   if (!compressOnly && !count) return;
@@ -2041,6 +2097,7 @@ document.addEventListener('click', async (e) => {
     case 'swap-axes':
       S.axesSwapped = !S.axesSwapped;
       S.axes = swapAxes(S.axes);
+      syncLockedSize();
       applySize();
       renderInfo();
       renderMaterial();
@@ -2220,8 +2277,9 @@ document.addEventListener('click', async (e) => {
 document.addEventListener('input', (e) => {
   const t = e.target;
   if (t.id === 'sizeW' || t.id === 'sizeD' || t.id === 'sizeH') {
-    const v = parseFloat(t.value.replace(/[^0-9.]/g, ''));
-    S.size[t.id.slice(-1).toLowerCase()] = v >= 50 ? Math.round(v) : null;
+    const v = parseFloat(t.value.replace(/[^0-9.]/g, '')), k = t.id.slice(-1).toLowerCase();
+    S.size[k] = v >= 50 ? Math.round(v) : null;
+    if (S.sizeLock) { S.sizeAnchor = k; syncLockedSize(); }
     updateSizeHints();
     clearTimeout(t._t);
     t._t = setTimeout(renderExport, 300);
@@ -2259,7 +2317,14 @@ document.addEventListener('input', (e) => {
 document.addEventListener('change', async (e) => {
   const t = e.target;
   if (t.id === 'fileInput') { openFile(t.files[0]); t.value = ''; }
-  else if (t.id === 'sizeW' || t.id === 'sizeD' || t.id === 'sizeH') { applySize(); renderMaterial(); renderExport(); }
+  else if (t.id === 'sizeW' || t.id === 'sizeD' || t.id === 'sizeH') { S.sizeNote = ''; applySize(); updateSizeHints(); renderMaterial(); renderExport(); }
+  else if (t.id === 'sizeLock') {
+    S.sizeLock = t.checked;
+    S.sizeNote = '';
+    // locking again: the height stays, W and D follow it
+    if (S.sizeLock) { S.sizeAnchor = S.size.h ? 'h' : S.size.w ? 'w' : S.size.d ? 'd' : 'h'; syncLockedSize(); }
+    applySize(); renderInfo(); renderMaterial(); renderExport();
+  }
   else if (t.id === 'compat') { S.compat = t.checked; saveWorkSoon(); savePrefs(); }
   else if (t.id === 'rotNum') { const g = activeGroup(); if (g) t.value = g.rotate; } // show the angle actually used (-180..180)
   else if (t.id === 'liftMm') { setLift(parseFloat(String(t.value).replace(',', '.'))); renderExport(); }
@@ -2344,4 +2409,4 @@ bindDrop($('#photoDrop'), loadPhoto);
   refreshAll();
 })();
 
-window.__studio = { S, openFile, runExport, viewer, newGroup, addChoice, updatePreview, setActive, call, saveWorkNow, setCompare, refreshAll, savePrefs, renderExport, qcReport, variantName, materialById, setPatternAngle, openEditDialog, savePhotoMaterial, tileUV };
+window.__studio = { S, openFile, runExport, viewer, newGroup, addChoice, updatePreview, setActive, call, saveWorkNow, setCompare, refreshAll, savePrefs, renderExport, qcReport, variantName, materialById, setPatternAngle, openEditDialog, savePhotoMaterial, tileUV, currentXf, store };

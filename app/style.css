@@ -106,6 +106,7 @@ h1, h2, h3 { text-wrap: balance; margin: 0; }
 .chip.plain.on::after { content: none; }
 select.input { appearance: auto; cursor: pointer; }
 .size-in.missing .input { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.size-note { background: var(--accent-soft); border-radius: 8px; padding: 8px 10px; color: var(--ink); }
 .choice.size { padding-left: 10px; }
 .sizes-head { margin-top: 6px; }
 .btn.toggle.on { background: var(--ink); color: var(--surface); border-color: var(--ink); }
