@@ -16,7 +16,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   analyze, applyToGroup, colorLabel, compressKeptTextures, createMaterial, encodeVariant, facesOfParts, groupPrimitive,
-  plainFloats, prepareOutput, releaseSource, resolveChoice, setVariant, DEFAULTS,
+  plainFloats, prepareOutput, releaseSource, resolveChoice, setVariant, stampGlb, DEFAULTS,
 } from '../core/skin.js';
 import { bboxWith, extentOf, outputTransform, sizeLabel, sizeWith, swapAxes } from '../core/size.js';
 
@@ -174,7 +174,7 @@ async function cmdRun(jobPath) {
 
   const variants = options.reduce((acc, list) => acc.flatMap((combo) => list.map((o) => [...combo, o])), [[]]);
   const cache = new Map();
-  const results = [], used = new Set();
+  const results = [], used = new Set(), sizesMade = new Set();
   for (const combo of variants) {
     const parts = combo.map((o) => built.get(optKey(o)));
     setVariant(ctx, parts);
@@ -195,7 +195,9 @@ async function cmdRun(jobPath) {
     let name = `${path.basename(input, '.glb')}__${labels.join('__')}.glb`;
     for (let i = 2; used.has(name); i++) name = name.replace(/(-\d+)?\.glb$/, `-${i}.glb`);
     used.add(name);
-    const bytes = await encodeVariant(io, doc, { liftM: Math.min(20, Math.max(0, job.liftMm ?? 10)) / 1000 /* 공간무드 hides furniture 30 mm up */ });
+    const liftMm = Math.max(0, job.liftMm ?? 10);
+    const bytes = stampGlb(await encodeVariant(io, doc, { liftM: liftMm / 1000 }), { app: '가구 스킨 스튜디오 CLI', savedAt: new Date().toISOString(), floorGapMm: liftMm, file: name }, sizesMade);
+    sizesMade.add(bytes.byteLength);
     await fs.writeFile(path.join(outDir, name), bytes);
     console.log(`  ${name}  ${mb(bytes.byteLength)}`);
     results.push({

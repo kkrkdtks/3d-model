@@ -10,7 +10,7 @@ import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer
 import {
   DEFAULTS, applyToGroup, baseColorSource, compressKeptTextures, createMaterial, cutPart, encodeVariant,
   faceColors, facesOfParts, groupPrimitive, partStats, plainFloats, prepareOutput,
-  colorLabel, hexToLinear, releaseSource, reskinGeometry, setVariant, srgbToLinear, triangleSources, weldedSources,
+  colorLabel, hexToLinear, releaseSource, reskinGeometry, setVariant, srgbToLinear, stampGlb, triangleSources, weldedSources,
 } from '../core/skin.js';
 import { adjacency, segment, undersideHeight, uniqueEdges, valleyCurvature, vertexColors, vertexNormals } from '../core/segment.js';
 import { bboxOf, furnitureAxes } from '../core/size.js';
@@ -449,6 +449,7 @@ async function exportVariants(args, progress, sendFile) {
   const io = await getIO();
   const T = timer();
   const { groups, variants, textures } = args;
+  const avoid = new Set(args.avoidSizes || []); // byte sizes of files saved before from this model
   progress('원본 다시 읽는 중', 0.02);
   const doc = await io.readBinary(state.bytes);
   await plainFloats(doc);
@@ -555,16 +556,21 @@ async function exportVariants(args, progress, sendFile) {
       made.push(mat);
     }
     T.mark(`variant ${i + 1} materials`);
-    const bytes = await encodeVariant(io, doc, { meshopt: args.meshopt !== false, liftM: Math.max(0, +args.liftMm || 0) / 1000 });
-    T.mark(`variant ${i + 1} encode`);
     const name = args.names[i];
+    const liftMm = Math.max(0, +args.liftMm || 0);
+    // a note on how it was made; never the byte size of a file saved before from this model (see stampGlb)
+    const bytes = stampGlb(await encodeVariant(io, doc, { meshopt: args.meshopt !== false, liftM: liftMm / 1000 }),
+      { app: args.app || '가구 스킨 스튜디오', savedAt: new Date().toISOString(), floorGapMm: liftMm, file: name }, avoid);
+    avoid.add(bytes.byteLength);
+    T.mark(`variant ${i + 1} encode`);
     const sizeMm = outerSizeMm(doc, args.axes);
     // what the file holds, read back from the bytes, and the Khronos validator's verdict
     progress(`변형 ${i + 1}/${variants.length} 검사 중`, 0.25 + (0.75 * (i + 0.8)) / variants.length);
     const qc = args.inspect === false ? null : await inspectGlb(bytes).catch((e) => ({ failed: String(e?.message || e) }));
     T.mark(`variant ${i + 1} check`);
+    const size = bytes.byteLength; // read before sendFile hands the buffer over (it is empty after)
     sendFile({ name, bytes, sizeMm, qc });
-    files.push({ name, size: bytes.byteLength, sizeMm, qc });
+    files.push({ name, size, sizeMm, qc });
     made.forEach((m) => m.dispose());
     madeTex.forEach((t) => t.dispose());
   }

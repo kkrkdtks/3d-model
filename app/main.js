@@ -70,9 +70,7 @@ const THUMB_PX = 480;
 const QC_LIMITS = { triangles: 200000, bytes: 15 * 1048576, texture: 4096 };
 // settings kept on this PC for every model (a model's own saved work may override the first three)
 const PREF_KEYS = ['quality', 'keptTex', 'compat', 'photos', 'photo', 'catalog', 'naming', 'liftMm'];
-// mm above the floor in saved files. 공간무드 STUDIO does not show furniture whose base is 30 mm off the
-// floor (10 and 20 mm place fine, checked by sunny 2026-11-03), so the gap stops at 20 mm.
-const LIFT_DEFAULT = 10, LIFT_MAX = 20;
+const LIFT_DEFAULT = 10, LIFT_MAX = 100; // mm above the floor in saved files
 
 // ---------- state ----------
 
@@ -244,7 +242,7 @@ function applyPrefs(p) {
   if (p.photo) S.photo = normalizePhoto(p.photo);
   if (typeof p.catalog === 'boolean') S.catalog = p.catalog;
   if (p.naming === 'en' || p.naming === 'ko') S.naming = p.naming;
-  if (Number.isFinite(p.liftMm) && p.liftMm >= 0) S.liftMm = Math.min(LIFT_MAX, p.liftMm); // a gap remembered before the 20 mm limit
+  if (Number.isFinite(p.liftMm) && p.liftMm >= 0) S.liftMm = Math.min(LIFT_MAX, p.liftMm);
 }
 
 function savePrefs() {
@@ -756,6 +754,8 @@ function provisionalH() {
   return 800;
 }
 const sizeKey = (f) => `size:${f.name}|${f.size}`;
+// byte sizes of the GLB files saved from this model on this PC: a new file never repeats one (see stampGlb)
+const savedSizesKey = (f) => `saved:${f.name}|${f.size}`;
 const axisOf = (k) => (k === 'h' ? 1 : S.axes[k]);
 /** W / D / H (mm, unrounded) in the model's own proportions from one of them. */
 function proportional(k, v) {
@@ -882,7 +882,6 @@ function refreshUVs(only = null) {
 /** Height above the floor of saved files (mm, 0..LIFT_MAX, 0.5 mm steps); remembered with the other export settings. */
 function setLift(v) {
   if (!Number.isFinite(v)) return;
-  S.liftCapped = v > LIFT_MAX;
   S.liftMm = Math.round(Math.max(0, Math.min(LIFT_MAX, v)) * 2) / 2;
   savePrefs();
 }
@@ -1244,7 +1243,6 @@ function renderExport() {
     <div class="field"><label for="liftMm">바닥에서 띄우기</label>
       <div class="input-row"><input class="input num short" id="liftMm" inputmode="decimal" value="${S.liftMm}"><span class="unit">mm</span>
         ${S.liftMm !== LIFT_DEFAULT ? `<button class="link" type="button" data-action="lift-default">${LIFT_DEFAULT}mm로</button>` : ''}</div>
-      ${S.liftCapped ? `<p class="warn-text">${LIFT_MAX}mm까지만 띄울 수 있어요. 30mm로 띄운 가구는 공간무드 배치 화면에 보이지 않았어요.</p>` : ''}
       <span class="note">공간에 놓았을 때 바닥이 고르지 않거나 러그를 깔아도 다리가 묻히지 않게 살짝 띄워요. 0~${LIFT_MAX}mm, 0이면 바닥에 딱 붙어요. 치수(H)는 그대로예요.</span></div>
     <label class="check"><input type="checkbox" id="compat" ${S.compat ? 'checked' : ''}>
       <span>호환 모드<small>파일이 공간무드나 다른 프로그램에서 안 열릴 때, 또는 텍스처를 JPG로 요구하는 마켓(아마존 등)에 올릴 때 켜세요. 용량이 2~3배 커져요.</small></span></label>
@@ -1501,8 +1499,9 @@ async function runExport(kind) {
       for (const c of v)
         for (const p of Object.values(c.def?.maps || {}))
           if (!textures[p]) textures[p] = new Uint8Array(await (await getBlob(p)).arrayBuffer());
+    const savedSizes = await store.getKV(savedSizesKey(S.file), []).catch(() => []);
     const res = await call('export', {
-      names, xf: currentXf(), axes: S.axes,
+      names, xf: currentXf(), axes: S.axes, app: `가구 스킨 스튜디오 ${VERSION}`, avoidSizes: savedSizes,
       quality: { simplify: q.simplify, keepSimplify: q.keepSimplify }, keptTextureSize: S.keptTex,
       meshopt: !S.compat, compat: S.compat, liftMm: S.liftMm, groups, variants, textures,
     }, {
@@ -1515,6 +1514,7 @@ async function runExport(kind) {
       },
     });
     console.info('내보내기 시간(ms)', JSON.stringify(res.timings));
+    store.setKV(savedSizesKey(S.file), [...savedSizes, ...res.files.map((f) => f.size)].slice(-500)).catch(() => {});
     const lists = !single && !compressOnly;
     if (lists) {
       const enc = new TextEncoder();

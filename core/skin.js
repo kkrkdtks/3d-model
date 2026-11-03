@@ -655,5 +655,36 @@ export async function encodeVariant(io, doc, opts = {}) {
   return io.writeBinary(copy);
 }
 
+/**
+ * Write a note about how the file was made into asset.extras of finished GLB bytes (only the JSON
+ * chunk changes, so the compressed data stays as it is). When the result has a byte size listed in
+ * avoid, the note is padded until it does not: a placement service that told two uploads apart by
+ * size took a re-saved file (same model, only the floor gap changed, identical size) for the old one.
+ */
+export function stampGlb(bytes, note, avoid = null) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  if (dv.getUint32(0, true) !== 0x46546c67 || dv.getUint32(16, true) !== 0x4e4f534a) return u8;
+  const jsonLen = dv.getUint32(12, true);
+  const json = JSON.parse(new TextDecoder().decode(u8.subarray(20, 20 + jsonLen)));
+  const rest = u8.subarray(20 + jsonLen);
+  const build = (pad) => {
+    json.asset.extras = { ...(json.asset.extras || {}), ...note, ...(pad ? { pad: '-'.repeat(pad) } : {}) };
+    if (!pad) delete json.asset.extras.pad;
+    let text = new TextEncoder().encode(JSON.stringify(json));
+    const fill = (4 - (text.length % 4)) % 4;
+    const out = new Uint8Array(20 + text.length + fill + rest.length);
+    const o = new DataView(out.buffer);
+    o.setUint32(0, 0x46546c67, true); o.setUint32(4, 2, true); o.setUint32(8, out.length, true);
+    o.setUint32(12, text.length + fill, true); o.setUint32(16, 0x4e4f534a, true);
+    out.set(text, 20); out.fill(0x20, 20 + text.length, 20 + text.length + fill);
+    out.set(rest, 20 + text.length + fill);
+    return out;
+  };
+  let out = build(0);
+  for (let pad = 1; avoid && avoid.has(out.length) && pad < 4096; pad++) out = build(pad);
+  return out;
+}
+
 export const EXTENSIONS = [EXTMeshoptCompression, EXTTextureWebP, KHRMaterialsAnisotropy, KHRMaterialsClearcoat, KHRMaterialsSheen, KHRMeshQuantization];
 export { Document };
