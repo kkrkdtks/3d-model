@@ -207,9 +207,14 @@ function downloadBlob(blob, name) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
+/**
+ * Hex codes in a text: "#8B4A22", "8B4A22", "#FFF". The short 3-digit form counts only with its #, so
+ * numbers copied along with a colour ("RGB 25, 25, 112") or words such as "bed" are not taken for colours.
+ */
 function parseHexes(text) {
   const out = [];
-  for (const m of String(text).matchAll(/[#＃]?\b([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b/g)) {
+  for (const m of String(text).matchAll(/(?:[#＃]|\b)([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b/g)) {
+    if (m[1].length === 3 && !/[#＃]/.test(m[0])) continue;
     let h = m[1].toUpperCase();
     if (h.length === 3) h = h.split('').map((c) => c + c).join('');
     if (!out.includes(`#${h}`)) out.push(`#${h}`);
@@ -504,6 +509,9 @@ function showCut() {
   const p = S.parts[S.cut.part];
   viewer.setCutPreview(S.cut.part, yToMm(S.cut.y) / 1000, bboxWith({ min: p.min, max: p.max }, currentXf()));
 }
+
+/** A length typed in mm; "1,200" is 1200 (a thousands comma), not 1. */
+const mmValue = (s) => parseFloat(String(s).replace(/,/g, ''));
 
 /** Slider or box moved: keep the other in step without redrawing the panel. */
 function setCutMm(mm, from) {
@@ -1474,7 +1482,7 @@ async function saveTo(target, name, data) {
   downloadBlob(data instanceof Blob ? data : new Blob([data]), name);
 }
 
-const safeName = (s) => String(s).replace(/[\\/:*?"<>|#\s]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+const safeName = (s) => String(s).replace(/[\\/:*?"<>|#\s\x00-\x1f]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 /** Letters, digits, _ and - only (what web services and marketplaces accept everywhere); fallback when nothing is left. */
 const asciiName = (s, fallback) => {
   const a = String(s ?? '').normalize('NFKD').replace(/[^\x20-\x7e]/g, '').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
@@ -1512,7 +1520,7 @@ function photoOpts(angle = 'current') {
 const photoExt = () => (S.photo.bg === 'white' ? '.jpg' : '.png');
 
 /** The photo files of a variant: one per chosen direction (no suffix when there is just one) and the thumbnail. */
-function photoFilesFor(glbName, base) {
+function photoFilesFor(glbName) {
   const stem = glbName.replace(/\.glb$/, ''), ext = photoExt(), one = S.photo.angles.length === 1;
   const angles = {};
   for (const a of S.photo.angles) angles[a] = one ? `${stem}${ext}` : `${stem}_${PHOTO_ANGLES[a][en() ? 'en' : 'ko']}${ext}`;
@@ -1576,7 +1584,7 @@ async function runExport(kind) {
     return n;
   });
   // product photos per variant and the lists of variants come along (not with the plain compressed copy)
-  const photoFiles = !compressOnly && S.photos ? names.map((n) => photoFilesFor(n, base)) : null;
+  const photoFiles = !compressOnly && S.photos ? names.map((n) => photoFilesFor(n)) : null;
   const single = names.length === 1 && !photoFiles;
   const listName = sideName(base, 'list'), jsonName = sideName(base, 'json'), catalogName = sideName(base, 'catalog');
   const zipName = `${nameBase(base)}${en() ? `_variants-${names.length}` : `_변형${names.length}개`}.zip`;
@@ -2403,7 +2411,7 @@ document.addEventListener('input', (e) => {
   } else if (t.id === 'prefix') { S.prefix = t.value.trim(); saveWorkSoon(); }
   else if (t.id === 'sensitivity') { S.sensitivity = +t.value; S.confirmReseg = false; }
   else if (t.id === 'cutRange') setCutMm(+t.value, 'range');
-  else if (t.id === 'cutMm') { const v = parseFloat(t.value); if (v > 0) { clearTimeout(t._t); t._t = setTimeout(() => setCutMm(v, 'box'), 250); } }
+  else if (t.id === 'cutMm') { const v = mmValue(t.value); if (v > 0) { clearTimeout(t._t); t._t = setTimeout(() => setCutMm(v, 'box'), 250); } }
   else if (t.dataset.colorName !== undefined) {
     const c = S.colors[+t.dataset.colorName];
     if (c) { c.name = t.value.trim() || c.hex; clearTimeout(t._t); t._t = setTimeout(() => { saveColors(); renderMaterial(); }, 400); }
@@ -2442,7 +2450,7 @@ document.addEventListener('change', async (e) => {
   else if (t.id === 'catalog') { S.catalog = t.checked; renderExport(); savePrefs(); }
   else if (t.id === 'segColor') { S.segColor = t.checked; S.confirmReseg = false; renderParts(); }
   else if (t.id === 'segBase') { S.segBase = t.checked; S.confirmReseg = false; renderParts(); }
-  else if (t.id === 'cutMm') setCutMm(parseFloat(t.value), 'change');
+  else if (t.id === 'cutMm') setCutMm(mmValue(t.value), 'change');
   else if (t.id === 'photos') { S.photos = t.checked; renderExport(); savePrefs(); }
   else if (t.id === 'photoInput') { loadPhoto(t.files[0]); t.value = ''; }
   else if (t.id === 'pFlatten') { photo.flatten = t.checked; schedulePhotoPreview(); }
@@ -2453,7 +2461,10 @@ document.addEventListener('change', async (e) => {
     t.value = '';
     if (!f) return;
     store.importLibrary(await f.arrayBuffer()).then(async (r) => {
+      // a material brought again replaces the one here: its swatch and textures are drawn anew
+      for (const id of r.ids) { forgetSwatches(id); forgetTextures(`${id}/`); }
       for (const m of await store.listMaterials()) addUserMaterial(m);
+      for (const g of S.groups) if (g.choices.some((c) => r.ids.includes(c.materialId))) updatePreview(g);
       S.colors = await store.getKV('colors', []);
       renderLibrary();
       refreshAll();
@@ -2461,6 +2472,9 @@ document.addEventListener('change', async (e) => {
     }).catch((err) => toast(`가져오지 못했어요: ${err.message}`, 6000));
   }
 });
+
+// closing the window while the files are being made would lose them: the browser asks first
+window.addEventListener('beforeunload', (e) => { if (S.exporting) { e.preventDefault(); e.returnValue = ''; } });
 
 // the debounced save may not get to run once the window closes
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveWorkNow(); });
@@ -2479,7 +2493,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target.id === 'hexInput') { e.preventDefault(); $('[data-action="hex-add"]')?.click(); }
   if (e.key === 'Enter' && e.target.id === 'sizeInput') { e.preventDefault(); $('[data-action="size-add"]')?.click(); }
   if (e.key === 'Enter' && /^size[WDH]$/.test(e.target.id)) e.target.blur();
-  if (e.key === 'Enter' && e.target.id === 'cutMm') { e.preventDefault(); setCutMm(parseFloat(e.target.value), 'box'); applyCut(); }
+  if (e.key === 'Enter' && e.target.id === 'cutMm') { e.preventDefault(); setCutMm(mmValue(e.target.value), 'box'); applyCut(); }
 });
 
 // drag and drop: GLB anywhere on the page, photos onto the photo dialog

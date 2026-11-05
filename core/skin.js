@@ -587,7 +587,11 @@ export async function createMaterial(doc, def, color, loadImage, cache = new Map
       const bytes = img instanceof Uint8Array ? img : img.bytes;
       const mime = img.mime || (path.endsWith('.webp') ? 'image/webp' : path.endsWith('.png') ? 'image/png' : 'image/jpeg');
       if (mime === 'image/webp') doc.createExtension(EXTTextureWebP).setRequired(true);
-      cache.set(path, doc.createTexture(path).setImage(bytes).setMimeType(mime).setURI(path.replace(/\//g, '_')));
+      // the name's extension follows the image (setURI also sets the type from it: a library .webp
+      // turned into JPEG for compatibility mode was otherwise labelled WebP)
+      const ext = { 'image/webp': '.webp', 'image/png': '.png', 'image/jpeg': '.jpg' }[mime] || '';
+      const uri = path.replace(/\//g, '_').replace(/\.(webp|png|jpe?g)$/i, '') + ext;
+      cache.set(path, doc.createTexture(path).setImage(bytes).setURI(uri).setMimeType(mime));
     }
     return cache.get(path);
   };
@@ -719,6 +723,18 @@ export function liftDocument(doc, liftM) {
 }
 
 /**
+ * Materials no shown primitive uses leave the copy before it is pruned, with the textures only
+ * they used. prune keeps a material that has extras (keepExtras, for the notes this program
+ * writes), so a file this program made and then re-skinned would otherwise carry the replaced
+ * material's textures along unused (quantize drops the material itself later, not its textures).
+ */
+function dropUnusedMaterials(doc) {
+  const shown = new Set();
+  for (const mesh of doc.getRoot().listMeshes()) for (const p of mesh.listPrimitives()) if (p.getMaterial()) shown.add(p.getMaterial());
+  for (const m of doc.getRoot().listMaterials()) if (!shown.has(m)) m.dispose();
+}
+
+/**
  * Compress a finished variant document and return GLB bytes.
  * meshopt (EXT_meshopt_compression) gives the smallest files; without it only quantization is used.
  * liftM raises the furniture off the floor (see liftDocument) in the written copy only.
@@ -726,6 +742,7 @@ export function liftDocument(doc, liftM) {
 export async function encodeVariant(io, doc, opts = {}) {
   const { meshopt = true, liftM = 0 } = opts;
   const copy = cloneDocument(doc);
+  dropUnusedMaterials(copy);
   liftDocument(copy, liftM);
   if (meshopt) {
     await MeshoptEncoder.ready;
@@ -739,7 +756,24 @@ export async function encodeVariant(io, doc, opts = {}) {
     await copy.transform(prune({ keepExtras: true }), quantize());
   }
   copy.createExtension(KHRMeshQuantization).setRequired(true);
+  tidyExtensions(copy, meshopt);
   return io.writeBinary(copy);
+}
+
+/**
+ * Only the extensions the written file uses are declared. A file this program made comes back
+ * with meshopt and WebP declared as required; compatibility mode (no meshopt, JPEG textures) would
+ * otherwise still compress with meshopt and still demand WebP, which is what it is meant to avoid.
+ * Material extensions no material uses any more (a replaced finish) are dropped too.
+ */
+function tidyExtensions(doc, meshopt) {
+  const root = doc.getRoot(), mats = root.listMaterials();
+  for (const ext of root.listExtensionsUsed()) {
+    const name = ext.extensionName;
+    if (name === 'EXT_meshopt_compression') { if (!meshopt) ext.dispose(); }
+    else if (name === 'EXT_texture_webp') { if (!root.listTextures().some((t) => t.getMimeType() === 'image/webp')) ext.dispose(); }
+    else if (name.startsWith('KHR_materials_') && name !== 'KHR_materials_variants' && !mats.some((m) => m.getExtension(name))) ext.dispose();
+  }
 }
 
 /**

@@ -50,6 +50,7 @@ async function open({ bytes, segment: segOpts = {} }, progress) {
   const io = await getIO();
   const T = timer();
   progress('파일 읽는 중', 0.05);
+  checkOpenable(new Uint8Array(bytes));
   const doc = await io.readBinary(new Uint8Array(bytes));
   T.mark('read');
   await plainFloats(doc);
@@ -355,6 +356,25 @@ async function encodeTexture(bytes, mime, maxSize, { quality = 0.85, type = 'ima
   const out = await canvas.convertToBlob({ type, quality });
   const data = new Uint8Array(await out.arrayBuffer());
   return { bytes: type === 'image/webp' ? stripWebPProfile(data) : data, mimeType: type };
+}
+
+// compressions this program cannot read (it reads meshopt, WebP, JPEG and PNG): said plainly
+// instead of the reader's own error ("Cannot read properties of undefined ...")
+const UNREADABLE = {
+  KHR_draco_mesh_compression: 'Draco로 압축된 GLB라서 열 수 없어요',
+  KHR_texture_basisu: 'KTX2(Basis) 텍스처를 쓰는 GLB라서 열 수 없어요',
+};
+
+/** Throws, in plain words, when the bytes are not a GLB this program can open. */
+function checkOpenable(bytes) {
+  let json;
+  try {
+    ({ json } = glbChunks(bytes));
+  } catch {
+    throw new Error('GLB 파일이 아니거나 파일이 깨졌어요. 3DAISTUDIO에서 받은 .glb 파일을 다시 내려받아 열어 주세요.');
+  }
+  for (const name of json.extensionsRequired || [])
+    if (UNREADABLE[name]) throw new Error(`${UNREADABLE[name]}. 3DAISTUDIO에서 받은 원본이나 이 프로그램으로 저장한 GLB를 열어 주세요.`);
 }
 
 /** The JSON chunk and the binary chunk of a GLB. */

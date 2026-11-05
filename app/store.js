@@ -95,22 +95,32 @@ export async function exportLibrary() {
 
 const mimeOf = (path) => (path.endsWith('.png') ? 'image/png' : /\.jpe?g$/.test(path) ? 'image/jpeg' : 'image/webp');
 
-/** Merge a library .zip into this PC. Returns counts. */
+/** Merge a library .zip into this PC. Returns counts and the ids of the materials it brought (new or replaced). */
 export async function importLibrary(bytes) {
-  const files = unzipSync(new Uint8Array(bytes));
-  const lib = JSON.parse(strFromU8(files['library.json']));
+  const notOurs = '‘재질·색 관리 → 내보내기’로 만든 .zip 파일을 골라 주세요.';
+  let files, lib;
+  try {
+    files = unzipSync(new Uint8Array(bytes));
+    lib = files['library.json'] ? JSON.parse(strFromU8(files['library.json'])) : null;
+  } catch {
+    throw new Error(`ZIP 파일을 읽지 못했어요. ${notOurs}`);
+  }
+  if (!lib || typeof lib !== 'object') throw new Error(`재질과 색이 든 .zip이 아니에요. ${notOurs}`);
   let added = 0;
-  for (const def of lib.materials || []) {
+  const ids = [];
+  for (const def of Array.isArray(lib.materials) ? lib.materials : []) {
+    if (!def?.id || typeof def.id !== 'string') continue;
     const own = {};
     for (const [path, data] of Object.entries(files))
       if (path.startsWith(`${def.id}/`) && path !== `${def.id}/thumb.png`) own[path.slice(def.id.length + 1)] = new Blob([data], { type: mimeOf(path) });
     const thumbData = files[`${def.id}/thumb.png`];
     await saveMaterial({ id: def.id, def, files: own, thumb: thumbData ? new Blob([thumbData], { type: 'image/png' }) : null, created: Date.now() });
+    ids.push(def.id);
     added++;
   }
   const have = await getKV('colors', []);
   const known = new Set(have.map((c) => c.hex));
-  const newColors = (lib.colors || []).filter((c) => !known.has(c.hex));
+  const newColors = (Array.isArray(lib.colors) ? lib.colors : []).filter((c) => c?.hex && !known.has(c.hex));
   await setKV('colors', [...have, ...newColors]);
   // the work on each model: the newer one wins
   let works = 0;
@@ -121,5 +131,5 @@ export async function importLibrary(bytes) {
     await setKV(key, work);
     works++;
   }
-  return { materials: added, colors: newColors.length, works };
+  return { materials: added, colors: newColors.length, works, ids };
 }

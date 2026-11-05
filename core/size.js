@@ -349,10 +349,14 @@ export const holdWith = (hold, xf) => (hold ? hold.map((h, k) => h * Math.abs(xf
 /** A height in model units in the output frame (metres). */
 export const yWith = (y, xf) => (y === null || y === undefined ? -Infinity : y * xf.scale[1] + xf.offset[1]);
 
-/** "1800×900, 2000x1000, 2200" -> [{ w: 1800, d: 900 }, { w: 2000, d: 1000 }, { w: 2200, d: null }] */
+/**
+ * "1800×900, 2000x1000, 2200" -> [{ w: 1800, d: 900 }, { w: 2000, d: 1000 }, { w: 2200, d: null }].
+ * A comma inside a number ("1,800×900") is a thousands separator, not the start of the next size.
+ */
 export function parseSizes(text) {
   const out = [];
-  for (const m of String(text).matchAll(/(\d{2,5}(?:\.\d+)?)\s*(?:[x×X*]\s*(\d{2,5}(?:\.\d+)?))?/g)) {
+  const plain = String(text).replace(/(?<![\d.])(\d{1,2}),(\d{3})(?![\d.])/g, '$1$2');
+  for (const m of plain.matchAll(/(\d{2,5}(?:\.\d+)?)\s*(?:[x×X*]\s*(\d{2,5}(?:\.\d+)?))?/g)) {
     const w = Math.round(+m[1]), d = m[2] ? Math.round(+m[2]) : null;
     if (w < 50 || (d !== null && d < 50)) continue;
     if (!out.some((s) => s.w === w && s.d === d)) out.push({ w, d });
