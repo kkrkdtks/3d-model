@@ -955,6 +955,97 @@ def gen_cork(n=2048, seed=83):
     return dict(albedo=out, height=H, roughness=0.78 - 0.05 * norm01(H), ao=1 - 0.2 * (1 - norm01(H)))
 
 
+# ---------------------------------------------------------------- Clione sofa collection
+
+def gen_clione_woven(n=2048, seed=91, tile_cm=10):
+    """Clione woven fabric (직조): a close weave of thick nubby yarns (about 3.5 mm), plied from
+    light and dark fibres, whose slubs and knots gather into soft lumps 5-10 mm across; up close it
+    reads knobbly and crisp, from a step away as a lively heathered colour on a bumpy surface."""
+    rng = np.random.default_rng(seed)
+    px = tile_cm * 10 / n
+    W, alb, w = weave(n, rng, plain, 28, 26, yarn=(0.98, 0.97), amp=0.3, thick=0.72, wobble=0.28, slub=0.45,
+                      fibre=0.16, hair=0.08, tone=(0.8, 1.0), tone_var=0.12, fleck=0.5, twist=(2.0, 0.9),
+                      melange=0.4)
+    # the yarns' slubs and knots gather in lumps: raise the cloth there and stamp loops on top
+    lump = band(n, rng, 9, 20)
+    lump = smoothstep(-1.2, 1.6, lump / (lump.std() + 1e-9))
+    base = 0.45 * norm01(W) + 0.9 * lump - 0.2
+    H, T = _stamp_loops(n, rng, 1500, 1.1, 0.55, px, base, lift_map=lump, arc_range=(0.4, 0.9), asp_range=(0.45, 0.9))
+    H = np.maximum(H, base)
+    top = norm01(H)
+    # colour in linear light, kept in the range a tinted chip can show: mostly mid tones from the
+    # plied yarns, light flecks on the lumps, darker where the cloth sinks; the heather makes
+    # patches with more light or more dark fibres
+    z = np.log(np.clip(alb, 1e-3, None) * (1 + 2.0 * (T - 1)))
+    z = (z - z.mean()) / (z.std() + 1e-9)
+    heather = warp(band(n, rng, 4, 16), 20 * band(n, rng, 2, 6), 20 * band(n, rng, 2, 6))
+    heather = heather / (heather.std() + 1e-9)
+    streak = band(n, rng, 6, 30, ey=4.0)
+    heather = heather + 0.5 * streak / (streak.std() + 1e-9)
+    L = 0.62 * np.exp(0.17 * z + 0.18 * heather) * (0.72 + 0.4 * smoothstep(0.15, 0.85, top))
+    rough = 0.93 - 0.04 * top
+    ao = 1 - 0.45 * cavity(H, 14) - 0.3 * cavity(H, 90)
+    return dict(albedo=srgb(L), height=norm01(H), roughness=rough, ao=ao)
+
+
+def gen_clione_flock(n=2048, seed=92):
+    """Clione flocked fabric (플로킹): short fibres flocked onto a pebbled ground, so the surface
+    stands up in soft rounded nubs 2-4 mm across, packed close, while the touch stays velvety;
+    the short pile softens every edge and lies a little differently from patch to patch."""
+    rng = np.random.default_rng(seed)
+    H = np.full((n, n), 0.0, np.float32)
+    for cells, wgt in ((30, 1.0), (46, 0.6)):
+        F1, F2, ID = worley(n, cells, rng, jitter=0.9, dx=0.25 * band(n, rng, 3, 12), dy=0.25 * band(n, rng, 3, 12))
+        r = (0.5 + 0.2 * rng.random(cells * cells).astype(np.float32))[ID]
+        dome = np.clip(1 - (F1 / r) ** 2, 0, 1) ** 0.6
+        H = np.maximum(H, wgt * dome * (0.75 + 0.25 * rng.random(cells * cells).astype(np.float32))[ID])
+    H = blur(H, 7)
+    pile = band(n, rng, n / 6, n / 2.2)
+    crush = warp(band(n, rng, 2, 8), 20 * band(n, rng, 2, 6), 20 * band(n, rng, 2, 6))
+    t = norm01(H)
+    H = H + 0.04 * pile + 0.06 * crush
+    alb = (0.88 + 0.12 * t) * (1 + 0.03 * crush) * (1 + 0.02 * pile)
+    rough = 0.88 - 0.04 * t
+    return fabric_maps(H, alb, rough, 0.38, 14)
+
+
+def gen_clione_leather(n=2048, seed=93):
+    """Clione full natural leather (전체 천연가죽): a soft full-grain hide with little coating, so
+    the natural grain stays: fine irregular grain cells over a gently tumbled, pebbled surface,
+    growth lines and soft creases, a cloudy depth of tone and a low, even sheen."""
+    rng = np.random.default_rng(seed)
+    F1, F2, _ = worley(n, 140, rng, jitter=1.0, aniso=1.2, dx=0.6 * band(n, rng, 3, 12), dy=0.6 * band(n, rng, 3, 12))
+    cell = smoothstep(0.0, 0.5, F2 - F1) ** 0.8
+    G1, G2, _ = worley(n, 36, rng, jitter=1.0, dx=0.35 * band(n, rng, 3, 10), dy=0.35 * band(n, rng, 3, 10))
+    pebble = smoothstep(0.0, 0.6, G2 - G1) ** 0.5
+    gl = band(n, rng, 3, 12, ex=3.0)
+    gl = warp(gl, 30 * band(n, rng, 2, 6), 30 * band(n, rng, 2, 6))
+    lines = np.exp(-(gl / 0.06) ** 2)
+    cloud = band(n, rng, 1.5, 8)
+    H = 0.14 * blur(cell, 0.8) + 0.3 * blur(pebble, 1.5) - 0.3 * blur(lines, 2.0) + 0.25 * band(n, rng, 1.5, 6)
+    alb = 1 + 0.06 * cloud - 0.03 * blur(lines, 1.5) - 0.02 * (1 - cell) - 0.025 * (1 - pebble)
+    rough = 0.47 + 0.05 * (1 - cell) + 0.06 * (1 - pebble) + 0.04 * blur(lines, 1.5) + 0.02 * cloud
+    ao = 1 - 0.1 * (1 - pebble) - 0.05 * (1 - cell) - 0.1 * blur(lines, 1.5)
+    return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
+
+
+def gen_clione_biosil(n=2048, seed=94):
+    """Clione BIO-SIL (신소재 바이오실): a silicone-coated performance cloth made to look like
+    leather: a fine, shallow, even grain pressed into the coating, a soft two-tone mottle like
+    pull-up leather and a restrained satin sheen; no pores or scars, as the coating is uniform."""
+    rng = np.random.default_rng(seed)
+    F1, F2, _ = worley(n, 200, rng, jitter=0.85, aniso=1.1, dx=0.5 * band(n, rng, 3, 12), dy=0.5 * band(n, rng, 3, 12))
+    cell = smoothstep(0.0, 0.45, F2 - F1) ** 0.7
+    mottle = warp(band(n, rng, 1.5, 6), 40 * band(n, rng, 2, 6), 40 * band(n, rng, 2, 6))
+    fine = band(n, rng, n / 6, n / 2.5)
+    # soft broad dents where the padded cover gives (no sharp creases: the coating is supple)
+    dent = blur(band(n, rng, 2, 7), 12)
+    H = blur(cell, 1.0) + 0.06 * fine + 0.25 * dent
+    alb = 1 + 0.09 * mottle - 0.02 * (1 - cell)
+    rough = 0.46 + 0.05 * (1 - cell) - 0.04 * mottle
+    return dict(albedo=alb, height=norm01(H), roughness=rough, ao=1 - 0.05 * (1 - cell))
+
+
 # ---------------------------------------------------------------- the library
 
 def M(id, name, cat, palette, gen, tile, **kw):
@@ -976,6 +1067,12 @@ MATERIALS = [
     M('fabric-tweed', '트위드', '패브릭', 'fabric', gen_tweed, 8, relief=0.35, sheen=(0.3, 0.7)),
     M('fabric-teddy', '테디 (양털)', '패브릭', 'fabric', gen_teddy, 10, relief=1.4, sheen=(0.6, 0.6)),
     M('fabric-microfiber', '기능성 패브릭', '패브릭', 'fabric', gen_microfiber, 18, relief=0.08, sheen=(0.7, 0.45)),
+    # Clione sofa collection: the four covers of the Clione modular sofa (fabric palettes first
+    # show the colour in the brand's photo)
+    M('clione-woven', '직조 패브릭', '클리오네', 'clione-fabric', gen_clione_woven, 10, relief=1.6, sheen=(0.35, 0.65), minMean=0.72, swatchHex='#29495C'),
+    M('clione-flocking', '플로킹 패브릭', '클리오네', 'clione-fabric', gen_clione_flock, 9, relief=0.9, sheen=(0.8, 0.45), swatchHex='#E0DDD3'),
+    M('clione-leather', '전체 천연가죽', '클리오네', 'clione-leather', gen_clione_leather, 16, relief=0.14, swatchHex='#2C2C2D'),
+    M('clione-biosil', '신소재 바이오실 패브릭', '클리오네', 'clione-leather', gen_clione_biosil, 24, relief=0.05, swatchHex='#8C5C3A'),
     # stone
     M('stone-carrara', '카라라 대리석', '대리석', 'stone', gen_marble_carrara, 150, size=2048, swatchHex='#E6E3DD', swatchCm=60),
     M('stone-carrara-honed', '카라라 무광 (혼드)', '대리석', 'stone', 'stone-carrara', 150, roughness=0.42, swatchHex='#E6E3DD', swatchCm=60),
@@ -1052,6 +1149,13 @@ PALETTES = {
     ],
 }
 SHOW_ORDER = ['paint-supermatte', 'paint-matte', 'paint-satin', 'paint-gloss', 'paint-highgloss', 'paint-powder', 'paint-sand']
+# the Clione covers' colours as in the brand's photo, ahead of the usual fabric / leather colours
+CLIONE_COLORS = {
+    'clione-fabric': ('fabric', [{'id': 'clione-blue', 'name': '클리오네 블루', 'hex': '#29495C'},
+                                 {'id': 'clione-ivory', 'name': '클리오네 아이보리', 'hex': '#E0DDD3'}]),
+    'clione-leather': ('leather', [{'id': 'clione-black', 'name': '클리오네 블랙', 'hex': '#2C2C2D'},
+                                   {'id': 'clione-cognac', 'name': '클리오네 코냑', 'hex': '#8C5C3A'}]),
+}
 METAL_EXTRA = [
     {'id': 'stainless', 'name': '스테인리스', 'hex': '#C9CACB'}, {'id': 'white', 'name': '화이트 스테인', 'hex': '#E4E4E1'},
     {'id': 'black-steel', 'name': '블랙 스테인', 'hex': '#1D1C1B'}, {'id': 'gold', 'name': '골드', 'hex': '#D4AF6A'},
@@ -1078,7 +1182,7 @@ def srgb(c):
 
 
 # lowest reference brightness (linear) per category, so light chips still come out light
-MIN_MEAN = {'가죽': 0.82, '패브릭': 0.82, '대리석': 0.8, '나무': 0.6, '도장': 0.85, '메탈': 0.85, '기타': 0.75}
+MIN_MEAN = {'가죽': 0.82, '패브릭': 0.82, '클리오네': 0.82, '대리석': 0.8, '나무': 0.6, '도장': 0.85, '메탈': 0.85, '기타': 0.75}
 
 
 def normal_from_height(h, strength):
@@ -1242,6 +1346,9 @@ def main(argv):
     lib['materials'] = mats
     for k, v in PALETTES.items():
         lib['palettes'][k] = v
+    for k, (base, first) in CLIONE_COLORS.items():
+        have = {c['hex'] for c in first}
+        lib['palettes'][k] = first + [c for c in lib['palettes'][base] if c['hex'] not in have]
     have = {c['hex'] for c in lib['palettes']['metal']}
     lib['palettes']['metal'] += [c for c in METAL_EXTRA if c['hex'] not in have]
     have = {c['hex'] for c in lib['palettes']['paint']}

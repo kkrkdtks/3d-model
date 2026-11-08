@@ -449,6 +449,94 @@
       "roughnessMean": 0.82
     },
     {
+      "id": "clione-woven",
+      "name": "직조 패브릭",
+      "category": "클리오네",
+      "palette": "clione-fabric",
+      "swatchHex": "#29495C",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 10,
+      "roughness": 1,
+      "metallic": 0,
+      "sheen": {
+        "intensity": 0.35,
+        "roughness": 0.65
+      },
+      "albedoMean": 0.72,
+      "normalScale": 1,
+      "roughnessMean": 0.91,
+      "maps": {
+        "baseColor": "clione-woven/albedo.webp",
+        "normal": "clione-woven/normal.webp",
+        "orm": "clione-woven/orm.webp"
+      }
+    },
+    {
+      "id": "clione-flocking",
+      "name": "플로킹 패브릭",
+      "category": "클리오네",
+      "palette": "clione-fabric",
+      "swatchHex": "#E0DDD3",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 9,
+      "roughness": 1,
+      "metallic": 0,
+      "sheen": {
+        "intensity": 0.8,
+        "roughness": 0.45
+      },
+      "albedoMean": 0.847,
+      "normalScale": 1,
+      "roughnessMean": 0.857,
+      "maps": {
+        "baseColor": "clione-flocking/albedo.webp",
+        "normal": "clione-flocking/normal.webp",
+        "orm": "clione-flocking/orm.webp"
+      }
+    },
+    {
+      "id": "clione-leather",
+      "name": "전체 천연가죽",
+      "category": "클리오네",
+      "palette": "clione-leather",
+      "swatchHex": "#2C2C2D",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 16,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.8702,
+      "normalScale": 1,
+      "roughnessMean": 0.529,
+      "maps": {
+        "baseColor": "clione-leather/albedo.webp",
+        "normal": "clione-leather/normal.webp",
+        "orm": "clione-leather/orm.webp"
+      }
+    },
+    {
+      "id": "clione-biosil",
+      "name": "신소재 바이오실 패브릭",
+      "category": "클리오네",
+      "palette": "clione-leather",
+      "swatchHex": "#8C5C3A",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 24,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.8676,
+      "normalScale": 1,
+      "roughnessMean": 0.48,
+      "maps": {
+        "baseColor": "clione-biosil/albedo.webp",
+        "normal": "clione-biosil/normal.webp",
+        "orm": "clione-biosil/orm.webp"
+      }
+    },
+    {
       "id": "stone-carrara",
       "name": "카라라 대리석",
       "category": "대리석",
@@ -1449,6 +1537,115 @@
         "id": "white",
         "name": "화이트",
         "hex": "#E4DCCB"
+      }
+    ],
+    "clione-fabric": [
+      {
+        "id": "clione-blue",
+        "name": "클리오네 블루",
+        "hex": "#29495C"
+      },
+      {
+        "id": "clione-ivory",
+        "name": "클리오네 아이보리",
+        "hex": "#E0DDD3"
+      },
+      {
+        "id": "white",
+        "name": "화이트",
+        "hex": "#ECEAE4"
+      },
+      {
+        "id": "ivory",
+        "name": "아이보리",
+        "hex": "#E4DCCD"
+      },
+      {
+        "id": "beige",
+        "name": "베이지",
+        "hex": "#C8B59B"
+      },
+      {
+        "id": "grey",
+        "name": "그레이",
+        "hex": "#8C8B88"
+      },
+      {
+        "id": "charcoal",
+        "name": "차콜",
+        "hex": "#3A3A3C"
+      },
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#222224"
+      },
+      {
+        "id": "olive",
+        "name": "올리브",
+        "hex": "#6A6A47"
+      },
+      {
+        "id": "dusty-blue",
+        "name": "더스티 블루",
+        "hex": "#6E8496"
+      }
+    ],
+    "clione-leather": [
+      {
+        "id": "clione-black",
+        "name": "클리오네 블랙",
+        "hex": "#2C2C2D"
+      },
+      {
+        "id": "clione-cognac",
+        "name": "클리오네 코냑",
+        "hex": "#8C5C3A"
+      },
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#1D1C1B"
+      },
+      {
+        "id": "red",
+        "name": "레드",
+        "hex": "#8A1C1E"
+      },
+      {
+        "id": "burgundy",
+        "name": "버건디",
+        "hex": "#561A20"
+      },
+      {
+        "id": "cognac",
+        "name": "코냑",
+        "hex": "#8B4A22"
+      },
+      {
+        "id": "camel",
+        "name": "카멜",
+        "hex": "#B07B48"
+      },
+      {
+        "id": "blue",
+        "name": "블루",
+        "hex": "#24467C"
+      },
+      {
+        "id": "navy",
+        "name": "네이비",
+        "hex": "#1D2840"
+      },
+      {
+        "id": "taupe",
+        "name": "토프",
+        "hex": "#7B6C60"
+      },
+      {
+        "id": "white",
+        "name": "화이트",
+        "hex": "#E8E5DE"
       }
     ]
   }

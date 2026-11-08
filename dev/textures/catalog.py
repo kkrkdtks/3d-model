@@ -12,8 +12,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 LIB = json.load(open(os.path.join(ROOT, 'materials', 'library.json'), encoding='utf-8'))
 OUT = sys.argv[1]
 OVR = dict(a.split(':', 1) for a in sys.argv[2:])
-TABS = ['가죽', '패브릭', '대리석', '나무', '도장', '메탈', '기타']
-VIEW_CM = {'가죽': 12, '패브릭': 10, '대리석': 60, '나무': 45, '도장': 10, '메탈': 10, '기타': 14}
+TABS = ['가죽', '패브릭', '클리오네', '대리석', '나무', '도장', '메탈', '기타']
+VIEW_CM = {'가죽': 12, '패브릭': 10, '클리오네': 10, '대리석': 60, '나무': 45, '도장': 10, '메탈': 10, '기타': 14}
 SAMPLE = {  # a typical colour per material for the sheet
     'leather-matte': '#6B4A35', 'leather-gloss': '#2A2624', 'leather-vintage': '#8A5A36', 'leather-nappa': '#C9B9A3',
     'leather-milled': '#5B3B2A', 'leather-nubuck': '#9B7A58', 'leather-suede': '#A36B45', 'leather-semianiline': '#8B5A3C',
