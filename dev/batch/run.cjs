@@ -113,7 +113,7 @@ const log = (...a) => console.log(...a);
     else if (sel?.below != null) ids = parts.filter((q) => !taken.has(q.id) && (q.max[1] - minY) / Hm <= sel.below).map((q) => q.id);
     else if (sel?.taller != null) ids = parts.filter((q) => !taken.has(q.id) && (q.max[1] - q.min[1]) / Hm > sel.taller).map((q) => q.id);
     else if (sel?.above != null) ids = parts.filter((q) => !taken.has(q.id) && (q.min[1] - minY) / Hm >= sel.above).map((q) => q.id);
-    ids = ids.filter((id) => !taken.has(id));
+    ids = ids.filter((id) => !taken.has(id) && parts.some((q) => q.id === id));
     if (!ids.length) { log(`group ${g.name}: no parts, skipped`); continue; }
     await S(({ ids, g }) => {
       const st = window.__studio;

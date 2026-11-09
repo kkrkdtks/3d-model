@@ -1,0 +1,24 @@
+{
+ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/b2/sized/onyu_EK.glb",
+ "h": 1120,
+ "prefix": "온유_침대_EK_2000x2105_협탁2개",
+ "liftMm": 40,
+ "groups": [
+  {
+   "name": "프레임",
+   "select": {
+    "ids": [
+     0
+    ]
+   },
+   "choices": [
+    {
+     "material": "original",
+     "hex": "#3E312A",
+     "name": "다크월넛"
+    }
+   ]
+  }
+ ],
+ "out": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/b2/out/28_onyu_EK_p2"
+}

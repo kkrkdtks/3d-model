@@ -1,0 +1,43 @@
+{
+ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/b2/src/hug_a.glb",
+ "h": 745,
+ "prefix": "허그체어",
+ "liftMm": 40,
+ "groups": [
+  {
+   "name": "쿠션",
+   "select": {
+    "ids": [
+     0,
+     1,
+     6,
+     7
+    ]
+   },
+   "choices": [
+    {
+     "material": "leather-pu",
+     "hex": "#CBC1B3",
+     "name": "베이지"
+    }
+   ]
+  },
+  {
+   "name": "프레임",
+   "select": "rest",
+   "choices": [
+    {
+     "material": "paint-powder",
+     "hex": "#1B1B1B",
+     "name": "블랙"
+    },
+    {
+     "material": "paint-powder",
+     "hex": "#EBE6E2",
+     "name": "크림"
+    }
+   ]
+  }
+ ],
+ "out": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/b2/out/21_hug"
+}

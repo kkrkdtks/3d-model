@@ -1,0 +1,38 @@
+{
+ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/b2/src/nero_chair_a.glb",
+ "h": 745,
+ "prefix": "네로_쿠션체어_크림아이보리",
+ "liftMm": 40,
+ "groups": [
+  {
+   "name": "쿠션",
+   "select": {
+    "ids": [
+     0,
+     2,
+     3,
+     8
+    ]
+   },
+   "choices": [
+    {
+     "material": "leather-pu",
+     "hex": "#E9E8E3",
+     "name": "크림아이보리"
+    }
+   ]
+  },
+  {
+   "name": "프레임",
+   "select": "rest",
+   "choices": [
+    {
+     "material": "paint-powder",
+     "hex": "#E9E8E3",
+     "name": "크림아이보리"
+    }
+   ]
+  }
+ ],
+ "out": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/b2/out/12_nero_chair_cream"
+}

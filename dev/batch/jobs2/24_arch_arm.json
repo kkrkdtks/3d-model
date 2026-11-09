@@ -1,0 +1,46 @@
+{
+ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/b2/src/arch_arm.glb",
+ "h": 770,
+ "prefix": "아치암체어",
+ "liftMm": 40,
+ "groups": [
+  {
+   "name": "쿠션",
+   "select": {
+    "ids": [
+     0,
+     1
+    ]
+   },
+   "choices": [
+    {
+     "material": "fabric-cotton",
+     "hex": "#E5DED6",
+     "name": "베이지"
+    },
+    {
+     "material": "fabric-cotton",
+     "hex": "#B6B6AE",
+     "name": "그레이"
+    }
+   ]
+  },
+  {
+   "name": "다리",
+   "select": "rest",
+   "choices": [
+    {
+     "material": "paint-powder",
+     "hex": "#FCF6E6",
+     "name": "크림다리"
+    },
+    {
+     "material": "paint-powder",
+     "hex": "#5A3A26",
+     "name": "브라운다리"
+    }
+   ]
+  }
+ ],
+ "out": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/b2/out/24_arch_arm"
+}

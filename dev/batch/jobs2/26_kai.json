@@ -1,0 +1,48 @@
+{
+ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/b2/src/kai_a.glb",
+ "h": 800,
+ "prefix": "카이체어",
+ "liftMm": 40,
+ "groups": [
+  {
+   "name": "쿠션",
+   "select": {
+    "ids": [
+     1,
+     3,
+     4,
+     8
+    ]
+   },
+   "choices": [
+    {
+     "material": "leather-pu",
+     "hex": "#DBD5C9",
+     "name": "화이트"
+    },
+    {
+     "material": "leather-pu",
+     "hex": "#B5A894",
+     "name": "베이지"
+    }
+   ]
+  },
+  {
+   "name": "프레임",
+   "select": "rest",
+   "choices": [
+    {
+     "material": "wood-oak",
+     "hex": "#5A3421",
+     "name": "월넛"
+    },
+    {
+     "material": "wood-oak",
+     "hex": "#B08562",
+     "name": "내추럴"
+    }
+   ]
+  }
+ ],
+ "out": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/b2/out/26_kai"
+}

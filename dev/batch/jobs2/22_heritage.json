@@ -1,0 +1,41 @@
+{
+ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/b2/src/heritage.glb",
+ "h": 780,
+ "prefix": "헤리티지체어",
+ "liftMm": 40,
+ "groups": [
+  {
+   "name": "쿠션",
+   "select": {
+    "ids": [
+     0,
+     2
+    ]
+   },
+   "choices": [
+    {
+     "material": "fabric-boucle",
+     "hex": "#E3E2DB",
+     "name": "부클레아이보리"
+    }
+   ]
+  },
+  {
+   "name": "프레임",
+   "select": "rest",
+   "choices": [
+    {
+     "material": "wood-ash",
+     "hex": "#3F302B",
+     "name": "스모크월넛"
+    },
+    {
+     "material": "wood-ash",
+     "hex": "#9C5E30",
+     "name": "꼬냑브라운"
+    }
+   ]
+  }
+ ],
+ "out": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/b2/out/22_heritage"
+}

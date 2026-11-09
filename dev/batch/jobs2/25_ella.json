@@ -1,0 +1,51 @@
+{
+ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/b2/src/ella_p.glb",
+ "h": 765,
+ "prefix": "엘라체어",
+ "liftMm": 40,
+ "groups": [
+  {
+   "name": "쿠션",
+   "select": {
+    "ids": [
+     0,
+     1
+    ]
+   },
+   "choices": [
+    {
+     "material": "leather-pu",
+     "hex": "#CFCABA",
+     "name": "베이지"
+    },
+    {
+     "material": "leather-pu",
+     "hex": "#8A4524",
+     "name": "브라운"
+    },
+    {
+     "material": "leather-pu",
+     "hex": "#3F483D",
+     "name": "카키"
+    }
+   ]
+  },
+  {
+   "name": "다리",
+   "select": "rest",
+   "choices": [
+    {
+     "material": "metal-mirror",
+     "hex": "#C8C8C8",
+     "name": "실버다리"
+    },
+    {
+     "material": "paint-powder",
+     "hex": "#EBE6E2",
+     "name": "크림다리"
+    }
+   ]
+  }
+ ],
+ "out": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/b2/out/25_ella"
+}
