@@ -1,0 +1,10 @@
+{
+  "glb": "/mnt/project-files/Untitled 2.glb", "h": 750, "prefix": "test_table", "liftMm": 40,
+  "groups": [
+    { "name": "상판", "select": "top", "sizes": [[1600, 900]],
+      "choices": [{ "material": "stone-ceramic", "hex": "#C6C6BD", "name": "샌드그레이" }] },
+    { "name": "프레임", "select": "rest",
+      "choices": [{ "material": "wood-walnut", "hex": "#5C3C2B", "name": "월넛" }] }
+  ],
+  "out": "../out/_test_table"
+}
