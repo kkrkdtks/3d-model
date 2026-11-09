@@ -537,6 +537,46 @@
       }
     },
     {
+      "id": "jakomo-ople",
+      "name": "오플 천연면피 소가죽",
+      "category": "자코모",
+      "palette": "jakomo-ople",
+      "swatchHex": "#615346",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 12,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.9454,
+      "normalScale": 1,
+      "roughnessMean": 0.545,
+      "maps": {
+        "baseColor": "jakomo-ople/albedo.webp",
+        "normal": "jakomo-ople/normal.webp",
+        "orm": "jakomo-ople/orm.webp"
+      }
+    },
+    {
+      "id": "jakomo-lecce",
+      "name": "레체 이태리 천연면피 소가죽",
+      "category": "자코모",
+      "palette": "jakomo-lecce",
+      "swatchHex": "#505337",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 16,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.9175,
+      "normalScale": 1,
+      "roughnessMean": 0.496,
+      "maps": {
+        "baseColor": "jakomo-lecce/albedo.webp",
+        "normal": "jakomo-lecce/normal.webp",
+        "orm": "jakomo-lecce/orm.webp"
+      }
+    },
+    {
       "id": "stone-carrara",
       "name": "카라라 대리석",
       "category": "대리석",
@@ -1601,6 +1641,240 @@
         "id": "clione-cognac",
         "name": "클리오네 코냑",
         "hex": "#8C5C3A"
+      },
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#1D1C1B"
+      },
+      {
+        "id": "red",
+        "name": "레드",
+        "hex": "#8A1C1E"
+      },
+      {
+        "id": "burgundy",
+        "name": "버건디",
+        "hex": "#561A20"
+      },
+      {
+        "id": "cognac",
+        "name": "코냑",
+        "hex": "#8B4A22"
+      },
+      {
+        "id": "camel",
+        "name": "카멜",
+        "hex": "#B07B48"
+      },
+      {
+        "id": "blue",
+        "name": "블루",
+        "hex": "#24467C"
+      },
+      {
+        "id": "navy",
+        "name": "네이비",
+        "hex": "#1D2840"
+      },
+      {
+        "id": "taupe",
+        "name": "토프",
+        "hex": "#7B6C60"
+      },
+      {
+        "id": "white",
+        "name": "화이트",
+        "hex": "#E8E5DE"
+      }
+    ],
+    "jakomo-ople": [
+      {
+        "id": "jk-cream-white",
+        "name": "크림화이트",
+        "hex": "#ABA79E"
+      },
+      {
+        "id": "jk-cream-ivory",
+        "name": "크림아이보리",
+        "hex": "#9E9487"
+      },
+      {
+        "id": "jk-light-gray",
+        "name": "라이트그레이",
+        "hex": "#A4A29F"
+      },
+      {
+        "id": "jk-gray",
+        "name": "그레이",
+        "hex": "#696866"
+      },
+      {
+        "id": "jk-latte",
+        "name": "라떼",
+        "hex": "#7A6D5F"
+      },
+      {
+        "id": "jk-camel",
+        "name": "카멜",
+        "hex": "#615346"
+      },
+      {
+        "id": "jk-indie-pink",
+        "name": "인디핑크",
+        "hex": "#8E7471"
+      },
+      {
+        "id": "jk-orange",
+        "name": "오렌지",
+        "hex": "#815438"
+      },
+      {
+        "id": "jk-moca",
+        "name": "모카",
+        "hex": "#433A35"
+      },
+      {
+        "id": "jk-light-mint",
+        "name": "라이트민트",
+        "hex": "#AEB7B5"
+      },
+      {
+        "id": "jk-misty-blue",
+        "name": "미스티블루",
+        "hex": "#627379"
+      },
+      {
+        "id": "jk-navy",
+        "name": "네이비",
+        "hex": "#353742"
+      },
+      {
+        "id": "jk-khaki-green",
+        "name": "카키그린",
+        "hex": "#7A8065"
+      },
+      {
+        "id": "jk-green",
+        "name": "그린",
+        "hex": "#334A3D"
+      },
+      {
+        "id": "jk-black",
+        "name": "블랙",
+        "hex": "#2F2F2F"
+      },
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#1D1C1B"
+      },
+      {
+        "id": "red",
+        "name": "레드",
+        "hex": "#8A1C1E"
+      },
+      {
+        "id": "burgundy",
+        "name": "버건디",
+        "hex": "#561A20"
+      },
+      {
+        "id": "cognac",
+        "name": "코냑",
+        "hex": "#8B4A22"
+      },
+      {
+        "id": "camel",
+        "name": "카멜",
+        "hex": "#B07B48"
+      },
+      {
+        "id": "blue",
+        "name": "블루",
+        "hex": "#24467C"
+      },
+      {
+        "id": "navy",
+        "name": "네이비",
+        "hex": "#1D2840"
+      },
+      {
+        "id": "taupe",
+        "name": "토프",
+        "hex": "#7B6C60"
+      },
+      {
+        "id": "white",
+        "name": "화이트",
+        "hex": "#E8E5DE"
+      }
+    ],
+    "jakomo-lecce": [
+      {
+        "id": "jk-lecce-white",
+        "name": "레체화이트",
+        "hex": "#BEBDBB"
+      },
+      {
+        "id": "jk-lecce-white-sand",
+        "name": "레체화이트샌드",
+        "hex": "#ABA69F"
+      },
+      {
+        "id": "jk-lecce-beige",
+        "name": "레체베이지",
+        "hex": "#908278"
+      },
+      {
+        "id": "jk-lecce-gray",
+        "name": "레체그레이",
+        "hex": "#8C8782"
+      },
+      {
+        "id": "jk-lecce-blue",
+        "name": "레체블루",
+        "hex": "#576873"
+      },
+      {
+        "id": "jk-lecce-charcoal",
+        "name": "레체차콜",
+        "hex": "#494949"
+      },
+      {
+        "id": "jk-lecce-pink",
+        "name": "레체핑크",
+        "hex": "#735655"
+      },
+      {
+        "id": "jk-lecce-brown",
+        "name": "레체브라운",
+        "hex": "#946948"
+      },
+      {
+        "id": "jk-lecce-amber-orange",
+        "name": "레체앰버오렌지",
+        "hex": "#7B5235"
+      },
+      {
+        "id": "jk-lecce-green",
+        "name": "레체그린",
+        "hex": "#40524D"
+      },
+      {
+        "id": "jk-lecce-khaki-green",
+        "name": "레체카키그린",
+        "hex": "#505337"
+      },
+      {
+        "id": "jk-lecce-dark-brown",
+        "name": "레체다크브라운",
+        "hex": "#2D1D1B"
+      },
+      {
+        "id": "jk-lecce-black",
+        "name": "레체블랙",
+        "hex": "#262626"
       },
       {
         "id": "black",

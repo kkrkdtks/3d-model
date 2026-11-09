@@ -1,0 +1,82 @@
+{
+ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/jk/src/etna.glb",
+ "h": 1000,
+ "prefix": "에트나스윙4인",
+ "liftMm": 10,
+ "groups": [
+  {
+   "name": "가죽",
+   "select": {
+    "above": 0.05
+   },
+   "choices": [
+    {
+     "material": "jakomo-lecce",
+     "hex": "#BEBDBB",
+     "name": "레체화이트"
+    },
+    {
+     "material": "jakomo-lecce",
+     "hex": "#ABA69F",
+     "name": "레체화이트샌드"
+    },
+    {
+     "material": "jakomo-lecce",
+     "hex": "#908278",
+     "name": "레체베이지"
+    },
+    {
+     "material": "jakomo-lecce",
+     "hex": "#8C8782",
+     "name": "레체그레이"
+    },
+    {
+     "material": "jakomo-lecce",
+     "hex": "#576873",
+     "name": "레체블루"
+    },
+    {
+     "material": "jakomo-lecce",
+     "hex": "#494949",
+     "name": "레체차콜"
+    },
+    {
+     "material": "jakomo-lecce",
+     "hex": "#735655",
+     "name": "레체핑크"
+    },
+    {
+     "material": "jakomo-lecce",
+     "hex": "#946948",
+     "name": "레체브라운"
+    },
+    {
+     "material": "jakomo-lecce",
+     "hex": "#7B5235",
+     "name": "레체앰버오렌지"
+    },
+    {
+     "material": "jakomo-lecce",
+     "hex": "#40524D",
+     "name": "레체그린"
+    },
+    {
+     "material": "jakomo-lecce",
+     "hex": "#505337",
+     "name": "레체카키그린"
+    },
+    {
+     "material": "jakomo-lecce",
+     "hex": "#2D1D1B",
+     "name": "레체다크브라운"
+    },
+    {
+     "material": "jakomo-lecce",
+     "hex": "#262626",
+     "name": "레체블랙"
+    }
+   ]
+  }
+ ],
+ "out": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/jk/final/etna"
+}

@@ -43,7 +43,7 @@ const getBlob = async (path) => {
   return b;
 };
 
-const CATEGORIES = ['가죽', '패브릭', '클리오네', '대리석', '나무', '도장', '메탈', '기타'];
+const CATEGORIES = ['가죽', '패브릭', '클리오네', '자코모', '대리석', '나무', '도장', '메탈', '기타'];
 const PHOTO_TABS = { 가죽: 'leather', 패브릭: 'fabric', 대리석: 'marble', 나무: 'wood', 기타: 'other' };
 const NEUTRAL = '#A89F94';
 const SWATCH_TINT = { leather: '#8E5B3A', fabric: '#A39A8C', paint: '#B7B1A8', metal: '#9EA0A3', stone: '#DAD5CD', 'stone-dark': '#1C1C1E', wood: '#B08A60', glass: '#D9E3E1', rattan: '#C8A26E' };
@@ -1163,7 +1163,7 @@ function cardMeta(m) {
   const gloss = r < 0.12 ? '거울 광택' : r < 0.28 ? '광택' : r < 0.55 ? '반광' : '매트';
   if (m.metallic) return `금속 · ${gloss}`;
   // the Clione collection mixes fabrics and leathers: its palette tells which
-  const word = { 대리석: '무늬', 나무: '결', 패브릭: '짜임', 가죽: '결' }[m.category] || { 'clione-fabric': '짜임', 'clione-leather': '결' }[m.palette];
+  const word = { 대리석: '무늬', 나무: '결', 패브릭: '짜임', 가죽: '결' }[m.category] || { 'clione-fabric': '짜임', 'clione-leather': '결', 'jakomo-ople': '결', 'jakomo-lecce': '결' }[m.palette];
   if (m.maps && word && m.tileCm) return `${word} ${m.tileCm}cm`;
   if (m.maps && m.category === '기타' && m.tileCm) return `무늬 ${m.tileCm}cm`;
   return gloss;

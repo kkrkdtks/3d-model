@@ -48,7 +48,7 @@ const picks = LIST.split(',').filter(Boolean).map((s) => { const [id, hex] = s.s
   await S((ids) => { window.__studio.S.selection = new Set(ids); window.__studio.refreshAll(); }, parts);
   await p.click('[data-action="group-new"]');
   // the cards of every tab
-  for (const tab of ['가죽', '패브릭', '클리오네', '대리석', '나무', '도장', '메탈', '기타']) {
+  for (const tab of ['가죽', '패브릭', '클리오네', '자코모', '대리석', '나무', '도장', '메탈', '기타']) {
     await p.click(`[data-action="tab"][data-tab="${tab}"]`);
     await p.waitForFunction(() => [...document.querySelectorAll('#secMaterial img[data-swatch]')].every((i) => i.complete && i.naturalWidth > 0), null, { timeout: 60000 }).catch(() => log('swatches slow', tab));
     await p.waitForTimeout(300);

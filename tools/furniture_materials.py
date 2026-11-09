@@ -1046,6 +1046,49 @@ def gen_clione_biosil(n=2048, seed=94):
     return dict(albedo=alb, height=norm01(H), roughness=rough, ao=1 - 0.05 * (1 - cell))
 
 
+# ---------------------------------------------------------------- Jakomo leather sofas
+
+def gen_jakomo_ople(n=2048, seed=95):
+    """Jakomo OPLE (오플 천연면피 소가죽): Korean top-grain cowhide with only a light surface
+    finish, so the natural grain shows: a fine, even pebble of small rounded cells (about 1-1.5 mm)
+    with a slightly bigger, softer pebble under it, a little cloudy depth of tone and a moist,
+    soft satin look (no lacquer gloss)."""
+    rng = np.random.default_rng(seed)
+    F1, F2, _ = worley(n, 120, rng, jitter=0.95, aniso=1.1, dx=0.5 * band(n, rng, 3, 12), dy=0.5 * band(n, rng, 3, 12))
+    cell = smoothstep(0.0, 0.5, F2 - F1) ** 0.6
+    G1, G2, _ = worley(n, 46, rng, jitter=1.0, dx=0.4 * band(n, rng, 3, 10), dy=0.4 * band(n, rng, 3, 10))
+    pebble = smoothstep(0.0, 0.7, G2 - G1) ** 0.5
+    cloud = band(n, rng, 1.5, 8)
+    # soft growth lines, few and shallow (the hide is selected and evenly finished)
+    gl = warp(band(n, rng, 3, 10, ex=3.0), 30 * band(n, rng, 2, 6), 30 * band(n, rng, 2, 6))
+    lines = np.exp(-(gl / 0.05) ** 2)
+    H = 0.22 * blur(cell, 0.9) + 0.2 * blur(pebble, 1.5) - 0.15 * blur(lines, 2.0) + 0.15 * band(n, rng, 1.5, 6)
+    # an even, finished hide: only a faint cloudiness (light colours showed it as blotches)
+    alb = 1 + 0.015 * cloud - 0.025 * (1 - cell) - 0.01 * (1 - pebble) - 0.012 * blur(lines, 1.5)
+    rough = 0.5 + 0.06 * (1 - cell) + 0.04 * (1 - pebble) + 0.02 * cloud
+    ao = 1 - 0.08 * (1 - cell) - 0.06 * (1 - pebble) - 0.06 * blur(lines, 1.5)
+    return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
+
+
+def gen_jakomo_lecce(n=2048, seed=96):
+    """Jakomo LECCE (레체 이태리 천연면피 소가죽): Italian full-grain cowhide, drum-milled so the
+    grain rises into a soft, pronounced pebble (about 2-4 mm) over the fine natural cells; a
+    semi-aniline finish gives a gentle two-tone depth and a soft, slightly richer sheen."""
+    rng = np.random.default_rng(seed)
+    F1, F2, _ = worley(n, 150, rng, jitter=1.0, aniso=1.2, dx=0.6 * band(n, rng, 3, 12), dy=0.6 * band(n, rng, 3, 12))
+    cell = smoothstep(0.0, 0.5, F2 - F1) ** 0.8
+    G1, G2, GID = worley(n, 30, rng, jitter=1.0, dx=0.35 * band(n, rng, 3, 10), dy=0.35 * band(n, rng, 3, 10))
+    pebble = smoothstep(0.0, 0.8, G2 - G1) ** 0.45
+    lift = (0.8 + 0.4 * rng.random(30 * 30).astype(np.float32))[GID]
+    cloud = warp(band(n, rng, 1.5, 7), 30 * band(n, rng, 2, 6), 30 * band(n, rng, 2, 6))
+    H = 0.12 * blur(cell, 0.8) + 0.38 * blur(pebble * lift, 1.8) + 0.18 * band(n, rng, 1.5, 6)
+    # semi-aniline: the pebble tops a touch lighter, the folds between them a touch deeper
+    alb = 1 + 0.03 * cloud + 0.025 * (norm01(blur(pebble, 1.5)) - 0.5) - 0.02 * (1 - cell)
+    rough = 0.44 + 0.05 * (1 - cell) + 0.06 * (1 - pebble) + 0.02 * cloud
+    ao = 1 - 0.14 * (1 - pebble) - 0.05 * (1 - cell)
+    return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
+
+
 # ---------------------------------------------------------------- the library
 
 def M(id, name, cat, palette, gen, tile, **kw):
@@ -1073,6 +1116,9 @@ MATERIALS = [
     M('clione-flocking', '플로킹 패브릭', '클리오네', 'clione-fabric', gen_clione_flock, 9, relief=0.9, sheen=(0.8, 0.45), swatchHex='#E0DDD3'),
     M('clione-leather', '전체 천연가죽', '클리오네', 'clione-leather', gen_clione_leather, 16, relief=0.14, swatchHex='#2C2C2D'),
     M('clione-biosil', '신소재 바이오실 패브릭', '클리오네', 'clione-leather', gen_clione_biosil, 24, relief=0.05, swatchHex='#8C5C3A'),
+    # Jakomo leather sofas: the two hides of the Jakomo pages (colours from the pages' colour charts)
+    M('jakomo-ople', '오플 천연면피 소가죽', '자코모', 'jakomo-ople', gen_jakomo_ople, 12, relief=0.1, swatchHex='#615346'),
+    M('jakomo-lecce', '레체 이태리 천연면피 소가죽', '자코모', 'jakomo-lecce', gen_jakomo_lecce, 16, relief=0.16, swatchHex='#505337'),
     # stone
     M('stone-carrara', '카라라 대리석', '대리석', 'stone', gen_marble_carrara, 150, size=2048, swatchHex='#E6E3DD', swatchCm=60),
     M('stone-carrara-honed', '카라라 무광 (혼드)', '대리석', 'stone', 'stone-carrara', 150, roughness=0.42, swatchHex='#E6E3DD', swatchCm=60),
@@ -1156,6 +1202,23 @@ CLIONE_COLORS = {
     'clione-leather': ('leather', [{'id': 'clione-black', 'name': '클리오네 블랙', 'hex': '#2C2C2D'},
                                    {'id': 'clione-cognac', 'name': '클리오네 코냑', 'hex': '#8C5C3A'}]),
 }
+# the Jakomo colour charts (OPLE: 15 colours; LECCE: 13), ahead of the usual leather colours. Each chip
+# is the chart photo's mid-lit colour taken down by the viewer's brightness on a lit seat (about 1.2x)
+# with 10% more saturation, so a rendered seat looks like the chart chip.
+JAKOMO_COLORS = {
+    'jakomo-ople': ('leather', [{'id': 'jk-' + i, 'name': n, 'hex': h} for i, n, h in (
+        ('cream-white', '크림화이트', '#ABA79E'), ('cream-ivory', '크림아이보리', '#9E9487'), ('light-gray', '라이트그레이', '#A4A29F'),
+        ('gray', '그레이', '#696866'), ('latte', '라떼', '#7A6D5F'), ('camel', '카멜', '#615346'),
+        ('indie-pink', '인디핑크', '#8E7471'), ('orange', '오렌지', '#815438'), ('moca', '모카', '#433A35'),
+        ('light-mint', '라이트민트', '#AEB7B5'), ('misty-blue', '미스티블루', '#627379'), ('navy', '네이비', '#353742'),
+        ('khaki-green', '카키그린', '#7A8065'), ('green', '그린', '#334A3D'), ('black', '블랙', '#2F2F2F'))]),
+    'jakomo-lecce': ('leather', [{'id': 'jk-lecce-' + i, 'name': n, 'hex': h} for i, n, h in (
+        ('white', '레체화이트', '#BEBDBB'), ('white-sand', '레체화이트샌드', '#ABA69F'), ('beige', '레체베이지', '#908278'),
+        ('gray', '레체그레이', '#8C8782'), ('blue', '레체블루', '#576873'), ('charcoal', '레체차콜', '#494949'),
+        ('pink', '레체핑크', '#735655'), ('brown', '레체브라운', '#946948'), ('amber-orange', '레체앰버오렌지', '#7B5235'),
+        ('green', '레체그린', '#40524D'), ('khaki-green', '레체카키그린', '#505337'), ('dark-brown', '레체다크브라운', '#2D1D1B'),
+        ('black', '레체블랙', '#262626'))]),
+}
 METAL_EXTRA = [
     {'id': 'stainless', 'name': '스테인리스', 'hex': '#C9CACB'}, {'id': 'white', 'name': '화이트 스테인', 'hex': '#E4E4E1'},
     {'id': 'black-steel', 'name': '블랙 스테인', 'hex': '#1D1C1B'}, {'id': 'gold', 'name': '골드', 'hex': '#D4AF6A'},
@@ -1182,7 +1245,7 @@ def srgb(c):
 
 
 # lowest reference brightness (linear) per category, so light chips still come out light
-MIN_MEAN = {'가죽': 0.82, '패브릭': 0.82, '클리오네': 0.82, '대리석': 0.8, '나무': 0.6, '도장': 0.85, '메탈': 0.85, '기타': 0.75}
+MIN_MEAN = {'가죽': 0.82, '패브릭': 0.82, '클리오네': 0.82, '자코모': 0.82, '대리석': 0.8, '나무': 0.6, '도장': 0.85, '메탈': 0.85, '기타': 0.75}
 
 
 def normal_from_height(h, strength):
@@ -1346,7 +1409,7 @@ def main(argv):
     lib['materials'] = mats
     for k, v in PALETTES.items():
         lib['palettes'][k] = v
-    for k, (base, first) in CLIONE_COLORS.items():
+    for k, (base, first) in {**CLIONE_COLORS, **JAKOMO_COLORS}.items():
         have = {c['hex'] for c in first}
         lib['palettes'][k] = first + [c for c in lib['palettes'][base] if c['hex'] not in have]
     have = {c['hex'] for c in lib['palettes']['metal']}
