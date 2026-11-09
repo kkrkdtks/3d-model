@@ -1,0 +1,36 @@
+{
+ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/sized/11_1800.glb",
+ "h": 750,
+ "prefix": "오발리스_세라믹식탁_1800x950",
+ "liftMm": 40,
+ "groups": [
+  {
+   "name": "상판",
+   "select": "slab",
+   "choices": [
+    {
+     "material": "stone-ceramic",
+     "hex": "#D0CDC8",
+     "name": "샌드아이보리"
+    }
+   ]
+  },
+  {
+   "name": "다리",
+   "select": "rest",
+   "choices": [
+    {
+     "material": "paint-powder",
+     "hex": "#1B1B1B",
+     "name": "블랙"
+    },
+    {
+     "material": "paint-powder",
+     "hex": "#EBE6E2",
+     "name": "크림"
+    }
+   ]
+  }
+ ],
+ "out": "../out/11_ovalis_1800"
+}

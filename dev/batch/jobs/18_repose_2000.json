@@ -1,0 +1,3 @@
+{ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/sized/bed_2000.glb", "h": 1120, "prefix": "리포즈_침대_EK_2000x2105", "liftMm": 40,
+  "groups": [ { "name": "프레임", "select": "all", "choices": [{ "material": "wood-walnut", "hex": "#3A2517", "name": "다크월넛" }] } ],
+  "out": "../out/18_repose_2000" }

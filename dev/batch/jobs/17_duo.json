@@ -1,0 +1,32 @@
+{
+ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/sized/duo.glb",
+ "h": 840,
+ "prefix": "두오_펫세이프소파_4인_2760x1100",
+ "liftMm": 40,
+ "groups": [
+  {
+   "name": "원단",
+   "select": {
+    "taller": 0.05
+   },
+   "choices": [
+    {
+     "material": "original",
+     "hex": "#D2D1C4",
+     "name": "아이보리"
+    }
+   ]
+  }
+ ],
+ "out": "../out/17_duo",
+ "cuts": [
+  {
+   "part": 0,
+   "at": 0.0125
+  },
+  {
+   "part": 1,
+   "at": 0.0125
+  }
+ ]
+}

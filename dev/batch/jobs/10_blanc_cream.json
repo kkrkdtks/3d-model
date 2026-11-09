@@ -1,0 +1,45 @@
+{
+ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/sized/10w_al.glb",
+ "h": 750,
+ "prefix": "블랑_세라믹식탁_크림",
+ "liftMm": 40,
+ "groups": [
+  {
+   "name": "상판",
+   "select": "top",
+   "sizes": [
+    [
+     1600,
+     900
+    ],
+    [
+     1800,
+     900
+    ],
+    [
+     2000,
+     900
+    ]
+   ],
+   "choices": [
+    {
+     "material": "stone-ceramic",
+     "hex": "#B2B0AD",
+     "name": "페블그레이"
+    }
+   ]
+  },
+  {
+   "name": "다리",
+   "select": "rest",
+   "choices": [
+    {
+     "material": "paint-powder",
+     "hex": "#EBE6E2",
+     "name": "크림"
+    }
+   ]
+  }
+ ],
+ "out": "../out/10_blanc_cream"
+}

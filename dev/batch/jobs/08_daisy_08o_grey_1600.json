@@ -1,0 +1,48 @@
+{
+ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/sized/08o_1600.glb",
+ "h": 750,
+ "prefix": "데이지_양면세라믹식탁_타원형_화이트-그레이_1600x800",
+ "liftMm": 40,
+ "cuts": [],
+ "groups": [
+  {
+   "name": "상판(윗면)",
+   "select": "top",
+   "choices": [
+    {
+     "material": "stone-carrara-honed",
+     "hex": "#A39C91",
+     "name": "마블그레이"
+    }
+   ]
+  },
+  {
+   "name": "상판(아랫면)",
+   "select": "under-top",
+   "choices": [
+    {
+     "material": "stone-ceramic",
+     "hex": "#ECEBE6",
+     "name": "화이트"
+    }
+   ]
+  },
+  {
+   "name": "프레임·다리",
+   "select": "rest",
+   "choices": [
+    {
+     "material": "wood-oak",
+     "hex": "#A58B68",
+     "name": "내추럴"
+    },
+    {
+     "material": "wood-walnut",
+     "hex": "#4F3724",
+     "name": "월넛"
+    }
+   ]
+  }
+ ],
+ "out": "../out/08_daisy_08o_grey_1600"
+}

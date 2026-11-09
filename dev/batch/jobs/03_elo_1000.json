@@ -1,0 +1,10 @@
+{
+  "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/sized/elo_1000.glb", "h": 740, "prefix": "엘로_원형세라믹식탁_1000", "liftMm": 40,
+  "groups": [
+    { "name": "상판", "select": "slab",
+      "choices": [{ "material": "stone-ceramic", "hex": "#C6C5C3", "name": "매트그레이" }] },
+    { "name": "다리", "select": "rest",
+      "choices": [{ "material": "paint-powder", "hex": "#1B1B1B", "name": "블랙" }] }
+  ],
+  "out": "../out/03_elo_1000"
+}

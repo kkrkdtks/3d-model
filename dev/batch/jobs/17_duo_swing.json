@@ -1,0 +1,4 @@
+{ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/sized/duo_swing.glb", "w": 2760, "prefix": "두오_펫세이프소파_4인_모션(헤드업·슬라이딩)", "liftMm": 40,
+  "cuts": [ { "part": 0, "at": 0.015 } ],
+  "groups": [ { "name": "원단", "select": { "taller": 0.03 }, "choices": [{ "material": "original", "hex": "#D2D1C4", "name": "아이보리" }] } ],
+  "out": "../out/17_duo_swing" }

@@ -1,0 +1,37 @@
+{
+ "glb": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/sized/dio_1400.glb",
+ "h": 750,
+ "prefix": "디오_세라믹식탁_1400x800",
+ "liftMm": 40,
+ "groups": [
+  {
+   "name": "상판",
+   "select": "top",
+   "choices": [
+    {
+     "material": "stone-ceramic",
+     "hex": "#AAA697",
+     "name": "샌드그레이"
+    }
+   ]
+  },
+  {
+   "name": "프레임·다리",
+   "select": "rest",
+   "choices": [
+    {
+     "material": "wood-walnut",
+     "hex": "#4A3326",
+     "name": "월넛"
+    }
+   ]
+  }
+ ],
+ "out": "../out/01_dio_1400",
+ "cuts": [
+  {
+   "part": "top",
+   "at": 0.955
+  }
+ ]
+}
