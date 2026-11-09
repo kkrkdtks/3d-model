@@ -1,0 +1,3 @@
+// Khronos glTF validator on finished GLBs: node dev/batch/validate.cjs a.glb ...
+const v = require('gltf-validator'); const fs = require('fs');
+(async () => { let bad = 0; for (const f of process.argv.slice(2)) { const r = await v.validateBytes(new Uint8Array(fs.readFileSync(f))); const i = r.issues; if (i.numErrors) bad++; console.log(`${i.numErrors} errors ${i.numWarnings} warnings  ${f.split('/').pop().slice(0, 60)}`); if (i.numErrors) console.log(i.messages.filter((m) => m.severity === 0).slice(0, 3)); } process.exit(bad ? 1 : 0); })();
