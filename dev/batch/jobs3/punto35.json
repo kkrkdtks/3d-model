@@ -11,82 +11,93 @@
    },
    "choices": [
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#ABA79E",
      "name": "크림화이트"
     },
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#9E9487",
      "name": "크림아이보리"
     },
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#A4A29F",
      "name": "라이트그레이"
     },
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#696866",
      "name": "그레이"
     },
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#7A6D5F",
      "name": "라떼"
     },
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#615346",
      "name": "카멜"
     },
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#8E7471",
      "name": "인디핑크"
     },
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#815438",
      "name": "오렌지"
     },
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#433A35",
      "name": "모카"
     },
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#AEB7B5",
      "name": "라이트민트"
     },
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#627379",
      "name": "미스티블루"
     },
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#353742",
      "name": "네이비"
     },
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#7A8065",
      "name": "카키그린"
     },
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#334A3D",
      "name": "그린"
     },
     {
-     "material": "jakomo-ople",
+     "material": "jakomo-lecce",
      "hex": "#2F2F2F",
      "name": "블랙"
     }
    ]
+  },
+  {
+   "name": "다리",
+   "select": "rest",
+   "choices": [
+    {
+     "material": "metal-mirror",
+     "hex": "#1D1C1B",
+     "name": "블랙스테인"
+    }
+   ]
   }
  ],
- "out": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/jk/final/punto35"
+ "out": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/jk/final2/punto35"
 }

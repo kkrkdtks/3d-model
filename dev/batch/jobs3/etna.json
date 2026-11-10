@@ -76,7 +76,18 @@
      "name": "레체블랙"
     }
    ]
+  },
+  {
+   "name": "다리",
+   "select": "rest",
+   "choices": [
+    {
+     "material": "metal-mirror",
+     "hex": "#1D1C1B",
+     "name": "블랙스테인"
+    }
+   ]
   }
  ],
- "out": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/jk/final/etna"
+ "out": "/tmp/claude-0/-home-user-3d-model/37e97b6a-230e-5558-bd5d-e705ddf4ca4d/scratchpad/jk/final2/etna"
 }
