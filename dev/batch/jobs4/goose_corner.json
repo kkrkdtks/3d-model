@@ -1,0 +1,47 @@
+{
+ "glb": "/tmp/claude-0/-home-user/63147241-38a5-5711-ae99-7f0e8cb34b09/scratchpad/src/goose_corner.glb",
+ "h": 850,
+ "prefix": "에르모사구스_코너형",
+ "liftMm": 10,
+ "groups": [
+  {
+   "name": "가죽",
+   "select": {
+    "taller": 0.05
+   },
+   "choices": [
+    {
+     "material": "clione-hermosa",
+     "hex": "#908577",
+     "name": "에르모사 아이스"
+    },
+    {
+     "material": "clione-hermosa",
+     "hex": "#8E5D35",
+     "name": "에르모사 오렌지"
+    },
+    {
+     "material": "clione-hermosa",
+     "hex": "#3E413C",
+     "name": "에르모사 모스 그린"
+    },
+    {
+     "material": "clione-hermosa",
+     "hex": "#7E4924",
+     "name": "에르모사 코냑"
+    },
+    {
+     "material": "clione-hermosa",
+     "hex": "#66523C",
+     "name": "에르모사 골드 브라운"
+    },
+    {
+     "material": "clione-hermosa",
+     "hex": "#2B2B2C",
+     "name": "에르모사 블랙"
+    }
+   ]
+  }
+ ],
+ "out": "/tmp/claude-0/-home-user/63147241-38a5-5711-ae99-7f0e8cb34b09/scratchpad/out/goose_corner"
+}

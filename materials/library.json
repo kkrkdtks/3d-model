@@ -537,6 +537,46 @@
       }
     },
     {
+      "id": "clione-hermosa",
+      "name": "에르모사 구스 천연가죽",
+      "category": "클리오네",
+      "palette": "clione-hermosa",
+      "swatchHex": "#4A4E48",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 20,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.9241,
+      "normalScale": 1,
+      "roughnessMean": 0.534,
+      "maps": {
+        "baseColor": "clione-hermosa/albedo.webp",
+        "normal": "clione-hermosa/normal.webp",
+        "orm": "clione-hermosa/orm.webp"
+      }
+    },
+    {
+      "id": "clione-fjord",
+      "name": "피오르 밀드 천연가죽",
+      "category": "클리오네",
+      "palette": "clione-fjord",
+      "swatchHex": "#A97855",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 16,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.9474,
+      "normalScale": 1,
+      "roughnessMean": 0.522,
+      "maps": {
+        "baseColor": "clione-fjord/albedo.webp",
+        "normal": "clione-fjord/normal.webp",
+        "orm": "clione-fjord/orm.webp"
+      }
+    },
+    {
       "id": "jakomo-ople",
       "name": "오플 천연면피 소가죽",
       "category": "자코모",
@@ -1875,6 +1915,200 @@
         "id": "jk-lecce-black",
         "name": "레체블랙",
         "hex": "#262626"
+      },
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#1D1C1B"
+      },
+      {
+        "id": "red",
+        "name": "레드",
+        "hex": "#8A1C1E"
+      },
+      {
+        "id": "burgundy",
+        "name": "버건디",
+        "hex": "#561A20"
+      },
+      {
+        "id": "cognac",
+        "name": "코냑",
+        "hex": "#8B4A22"
+      },
+      {
+        "id": "camel",
+        "name": "카멜",
+        "hex": "#B07B48"
+      },
+      {
+        "id": "blue",
+        "name": "블루",
+        "hex": "#24467C"
+      },
+      {
+        "id": "navy",
+        "name": "네이비",
+        "hex": "#1D2840"
+      },
+      {
+        "id": "taupe",
+        "name": "토프",
+        "hex": "#7B6C60"
+      },
+      {
+        "id": "white",
+        "name": "화이트",
+        "hex": "#E8E5DE"
+      }
+    ],
+    "clione-hermosa": [
+      {
+        "id": "clh-ice",
+        "name": "에르모사 아이스",
+        "hex": "#908577"
+      },
+      {
+        "id": "clh-orange",
+        "name": "에르모사 오렌지",
+        "hex": "#8E5D35"
+      },
+      {
+        "id": "clh-moss-green",
+        "name": "에르모사 모스 그린",
+        "hex": "#3E413C"
+      },
+      {
+        "id": "clh-cognac",
+        "name": "에르모사 코냑",
+        "hex": "#7E4924"
+      },
+      {
+        "id": "clh-gold-brown",
+        "name": "에르모사 골드 브라운",
+        "hex": "#66523C"
+      },
+      {
+        "id": "clh-black",
+        "name": "에르모사 블랙",
+        "hex": "#2B2B2C"
+      },
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#1D1C1B"
+      },
+      {
+        "id": "red",
+        "name": "레드",
+        "hex": "#8A1C1E"
+      },
+      {
+        "id": "burgundy",
+        "name": "버건디",
+        "hex": "#561A20"
+      },
+      {
+        "id": "cognac",
+        "name": "코냑",
+        "hex": "#8B4A22"
+      },
+      {
+        "id": "camel",
+        "name": "카멜",
+        "hex": "#B07B48"
+      },
+      {
+        "id": "blue",
+        "name": "블루",
+        "hex": "#24467C"
+      },
+      {
+        "id": "navy",
+        "name": "네이비",
+        "hex": "#1D2840"
+      },
+      {
+        "id": "taupe",
+        "name": "토프",
+        "hex": "#7B6C60"
+      },
+      {
+        "id": "white",
+        "name": "화이트",
+        "hex": "#E8E5DE"
+      }
+    ],
+    "clione-fjord": [
+      {
+        "id": "clf-ice",
+        "name": "피오르 아이스",
+        "hex": "#AFA99E"
+      },
+      {
+        "id": "clf-beige",
+        "name": "피오르 베이지",
+        "hex": "#AFA697"
+      },
+      {
+        "id": "clf-lucky-gray",
+        "name": "피오르 럭키 그레이",
+        "hex": "#959593"
+      },
+      {
+        "id": "clf-lotus",
+        "name": "피오르 로투스",
+        "hex": "#A6A8A5"
+      },
+      {
+        "id": "clf-light-gray",
+        "name": "피오르 라이트 그레이",
+        "hex": "#5E5E60"
+      },
+      {
+        "id": "clf-grey",
+        "name": "피오르 그레이",
+        "hex": "#7E6F5E"
+      },
+      {
+        "id": "clf-cognac",
+        "name": "피오르 코냑",
+        "hex": "#906343"
+      },
+      {
+        "id": "clf-aqua-blue",
+        "name": "피오르 아쿠아 블루",
+        "hex": "#596472"
+      },
+      {
+        "id": "clf-peacock",
+        "name": "피오르 피콕",
+        "hex": "#3D505E"
+      },
+      {
+        "id": "clf-deep-green",
+        "name": "피오르 딥 그린",
+        "hex": "#4A5757"
+      },
+      {
+        "id": "clf-choco",
+        "name": "피오르 초코",
+        "hex": "#2F2D29"
+      },
+      {
+        "id": "clf-deep-gray",
+        "name": "피오르 딥 그레이",
+        "hex": "#4D4C48"
+      },
+      {
+        "id": "clf-navy",
+        "name": "피오르 네이비",
+        "hex": "#303136"
+      },
+      {
+        "id": "clf-black",
+        "name": "피오르 블랙",
+        "hex": "#373739"
       },
       {
         "id": "black",

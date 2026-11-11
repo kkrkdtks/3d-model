@@ -1046,6 +1046,49 @@ def gen_clione_biosil(n=2048, seed=94):
     return dict(albedo=alb, height=norm01(H), roughness=rough, ao=1 - 0.05 * (1 - cell))
 
 
+def gen_clione_hermosa(n=2048, seed=97):
+    """Clione HERMOSA GOOSE leather (에르모사 구스 천연가죽): a soft aniline-dyed full-grain hide as on
+    the brand's colour chart: an almost smooth face with a very fine, shallow natural grain (tiny cells
+    under 1 mm), a few faint growth lines, and the open, cloudy depth of tone of an aniline dye (darker
+    and lighter clouds a few centimetres across); a soft, low satin sheen."""
+    rng = np.random.default_rng(seed)
+    F1, F2, _ = worley(n, 260, rng, jitter=1.0, aniso=1.15, dx=0.5 * band(n, rng, 3, 12), dy=0.5 * band(n, rng, 3, 12))
+    cell = smoothstep(0.0, 0.5, F2 - F1) ** 0.7
+    G1, G2, _ = worley(n, 70, rng, jitter=1.0, dx=0.4 * band(n, rng, 3, 10), dy=0.4 * band(n, rng, 3, 10))
+    soft = smoothstep(0.0, 0.7, G2 - G1) ** 0.5
+    gl = warp(band(n, rng, 3, 10, ex=3.0), 30 * band(n, rng, 2, 6), 30 * band(n, rng, 2, 6))
+    lines = np.exp(-(gl / 0.04) ** 2)
+    cloud = warp(band(n, rng, 1.5, 6), 40 * band(n, rng, 2, 6), 40 * band(n, rng, 2, 6))
+    cloud2 = band(n, rng, 4, 14)
+    H = 0.3 * blur(cell, 0.7) + 0.15 * blur(soft, 1.5) - 0.12 * blur(lines, 2.0) + 0.2 * blur(band(n, rng, 1.5, 6), 4)
+    alb = 1 + 0.035 * cloud + 0.015 * cloud2 - 0.02 * (1 - cell) - 0.015 * blur(lines, 1.5)
+    rough = 0.5 + 0.04 * (1 - cell) + 0.03 * (1 - soft) - 0.03 * cloud
+    ao = 1 - 0.05 * (1 - cell) - 0.04 * (1 - soft) - 0.05 * blur(lines, 1.5)
+    return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
+
+
+def gen_clione_fjord(n=2048, seed=98):
+    """Clione FJORD swing sofa leather (피오르 밀드 가죽): a heavily drum-milled cowhide as on the
+    brand's 14-colour chart: a bold, irregular, rounded pebble (about 3-6 mm) with wavy folds between
+    the pebbles, finer cells on each one, an even, pigmented colour and a soft sheen."""
+    rng = np.random.default_rng(seed)
+    F1, F2, _ = worley(n, 170, rng, jitter=1.0, aniso=1.2, dx=0.6 * band(n, rng, 3, 12), dy=0.6 * band(n, rng, 3, 12))
+    cell = smoothstep(0.0, 0.5, F2 - F1) ** 0.8
+    G1, G2, GID = worley(n, 34, rng, jitter=1.0, aniso=1.2, dx=0.75 * band(n, rng, 3, 12), dy=0.75 * band(n, rng, 3, 12))
+    pebble = smoothstep(0.0, 0.9, G2 - G1) ** 0.5
+    P1, P2, _ = worley(n, 72, rng, jitter=1.0, dx=0.6 * band(n, rng, 3, 12), dy=0.6 * band(n, rng, 3, 12))
+    small = smoothstep(0.0, 0.8, P2 - P1) ** 0.6
+    lift = (0.7 + 0.6 * rng.random(34 * 34).astype(np.float32))[GID]
+    cloud = band(n, rng, 1.5, 7)
+    peb = 0.7 * blur(pebble * lift, 2.2) + 0.3 * blur(small, 1.6)
+    H = 0.1 * blur(cell, 0.8) + 0.5 * peb + 0.12 * band(n, rng, 1.5, 6)
+    fold = 1 - norm01(peb)
+    alb = 1 + 0.02 * cloud - 0.02 * fold ** 2 - 0.015 * (1 - cell)
+    rough = 0.47 + 0.04 * (1 - cell) + 0.05 * fold + 0.02 * cloud
+    ao = 1 - 0.15 * fold ** 1.5 - 0.05 * (1 - cell)
+    return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
+
+
 # ---------------------------------------------------------------- Jakomo leather sofas
 
 def gen_jakomo_ople(n=2048, seed=95):
@@ -1116,6 +1159,9 @@ MATERIALS = [
     M('clione-flocking', '플로킹 패브릭', '클리오네', 'clione-fabric', gen_clione_flock, 9, relief=0.9, sheen=(0.8, 0.45), swatchHex='#E0DDD3'),
     M('clione-leather', '전체 천연가죽', '클리오네', 'clione-leather', gen_clione_leather, 16, relief=0.14, swatchHex='#2C2C2D'),
     M('clione-biosil', '신소재 바이오실 패브릭', '클리오네', 'clione-leather', gen_clione_biosil, 24, relief=0.05, swatchHex='#8C5C3A'),
+    # the hides of two Clione sofas, each with its own colour chart (2026-11-11)
+    M('clione-hermosa', '에르모사 구스 천연가죽', '클리오네', 'clione-hermosa', gen_clione_hermosa, 20, relief=0.12, swatchHex='#4A4E48'),
+    M('clione-fjord', '피오르 밀드 천연가죽', '클리오네', 'clione-fjord', gen_clione_fjord, 16, relief=0.2, swatchHex='#A97855'),
     # Jakomo leather sofas: the two hides of the Jakomo pages (colours from the pages' colour charts)
     M('jakomo-ople', '오플 천연면피 소가죽', '자코모', 'jakomo-ople', gen_jakomo_ople, 12, relief=0.1, swatchHex='#615346'),
     M('jakomo-lecce', '레체 이태리 천연면피 소가죽', '자코모', 'jakomo-lecce', gen_jakomo_lecce, 16, relief=0.16, swatchHex='#505337'),
@@ -1201,6 +1247,13 @@ CLIONE_COLORS = {
                                  {'id': 'clione-ivory', 'name': '클리오네 아이보리', 'hex': '#E0DDD3'}]),
     'clione-leather': ('leather', [{'id': 'clione-black', 'name': '클리오네 블랙', 'hex': '#2C2C2D'},
                                    {'id': 'clione-cognac', 'name': '클리오네 코냑', 'hex': '#8C5C3A'}]),
+    # Hermosa Goose (6) and Fjord swing sofa (14) colour charts sent by sunny 2026-11-11: each chip is the
+    # chart's median colour taken down 1.2x with 10% more saturation (as the Jakomo charts), so a lit seat
+    # looks like the chip
+    'clione-hermosa': ('leather', [{'id': 'clh-' + i, 'name': '에르모사 ' + n, 'hex': h} for i, n, h in (
+        ('ice', '아이스', '#908577'), ('orange', '오렌지', '#8E5D35'), ('moss-green', '모스 그린', '#3E413C'), ('cognac', '코냑', '#7E4924'), ('gold-brown', '골드 브라운', '#66523C'), ('black', '블랙', '#2B2B2C'))]),
+    'clione-fjord': ('leather', [{'id': 'clf-' + i, 'name': '피오르 ' + n, 'hex': h} for i, n, h in (
+        ('ice', '아이스', '#AFA99E'), ('beige', '베이지', '#AFA697'), ('lucky-gray', '럭키 그레이', '#959593'), ('lotus', '로투스', '#A6A8A5'), ('light-gray', '라이트 그레이', '#5E5E60'), ('grey', '그레이', '#7E6F5E'), ('cognac', '코냑', '#906343'), ('aqua-blue', '아쿠아 블루', '#596472'), ('peacock', '피콕', '#3D505E'), ('deep-green', '딥 그린', '#4A5757'), ('choco', '초코', '#2F2D29'), ('deep-gray', '딥 그레이', '#4D4C48'), ('navy', '네이비', '#303136'), ('black', '블랙', '#373739'))]),
 }
 # the Jakomo colour charts (OPLE: 15 colours; LECCE: 13), ahead of the usual leather colours. Each chip
 # is the chart photo's mid-lit colour taken down by the viewer's brightness on a lit seat (about 1.2x)

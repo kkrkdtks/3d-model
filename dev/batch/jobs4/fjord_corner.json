@@ -1,0 +1,98 @@
+{
+ "glb": "/tmp/claude-0/-home-user/63147241-38a5-5711-ae99-7f0e8cb34b09/scratchpad/src/fjord_corner.glb",
+ "h": 950,
+ "prefix": "피오르_코너모듈",
+ "liftMm": 10,
+ "groups": [
+  {
+   "name": "가죽",
+   "select": {
+    "above": 0.1
+   },
+   "choices": [
+    {
+     "material": "clione-fjord",
+     "hex": "#AFA99E",
+     "name": "피오르 아이스"
+    },
+    {
+     "material": "clione-fjord",
+     "hex": "#AFA697",
+     "name": "피오르 베이지"
+    },
+    {
+     "material": "clione-fjord",
+     "hex": "#959593",
+     "name": "피오르 럭키 그레이"
+    },
+    {
+     "material": "clione-fjord",
+     "hex": "#A6A8A5",
+     "name": "피오르 로투스"
+    },
+    {
+     "material": "clione-fjord",
+     "hex": "#5E5E60",
+     "name": "피오르 라이트 그레이"
+    },
+    {
+     "material": "clione-fjord",
+     "hex": "#7E6F5E",
+     "name": "피오르 그레이"
+    },
+    {
+     "material": "clione-fjord",
+     "hex": "#906343",
+     "name": "피오르 코냑"
+    },
+    {
+     "material": "clione-fjord",
+     "hex": "#596472",
+     "name": "피오르 아쿠아 블루"
+    },
+    {
+     "material": "clione-fjord",
+     "hex": "#3D505E",
+     "name": "피오르 피콕"
+    },
+    {
+     "material": "clione-fjord",
+     "hex": "#4A5757",
+     "name": "피오르 딥 그린"
+    },
+    {
+     "material": "clione-fjord",
+     "hex": "#2F2D29",
+     "name": "피오르 초코"
+    },
+    {
+     "material": "clione-fjord",
+     "hex": "#4D4C48",
+     "name": "피오르 딥 그레이"
+    },
+    {
+     "material": "clione-fjord",
+     "hex": "#303136",
+     "name": "피오르 네이비"
+    },
+    {
+     "material": "clione-fjord",
+     "hex": "#373739",
+     "name": "피오르 블랙"
+    }
+   ]
+  },
+  {
+   "name": "받침대",
+   "select": "rest",
+   "choices": [
+    {
+     "material": "metal-mirror",
+     "hex": "#C9CACB",
+     "name": "스테인리스"
+    }
+   ]
+  }
+ ],
+ "out": "/tmp/claude-0/-home-user/63147241-38a5-5711-ae99-7f0e8cb34b09/scratchpad/out/fjord_corner"
+}

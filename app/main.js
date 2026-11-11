@@ -1163,7 +1163,7 @@ function cardMeta(m) {
   const gloss = r < 0.12 ? '거울 광택' : r < 0.28 ? '광택' : r < 0.55 ? '반광' : '매트';
   if (m.metallic) return `금속 · ${gloss}`;
   // the Clione collection mixes fabrics and leathers: its palette tells which
-  const word = { 대리석: '무늬', 나무: '결', 패브릭: '짜임', 가죽: '결' }[m.category] || { 'clione-fabric': '짜임', 'clione-leather': '결', 'jakomo-ople': '결', 'jakomo-lecce': '결' }[m.palette];
+  const word = { 대리석: '무늬', 나무: '결', 패브릭: '짜임', 가죽: '결' }[m.category] || { 'clione-fabric': '짜임', 'clione-leather': '결', 'jakomo-ople': '결', 'jakomo-lecce': '결', 'clione-hermosa': '결', 'clione-fjord': '결' }[m.palette];
   if (m.maps && word && m.tileCm) return `${word} ${m.tileCm}cm`;
   if (m.maps && m.category === '기타' && m.tileCm) return `무늬 ${m.tileCm}cm`;
   return gloss;
