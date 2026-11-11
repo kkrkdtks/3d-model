@@ -1151,10 +1151,10 @@ def gen_muumu_grain(n=2048, seed=99):
     gl = warp(band(n, rng, 4, 14, ex=2.5, angle=20), 25 * band(n, rng, 2, 6), 25 * band(n, rng, 2, 6))
     lines = np.exp(-(gl / 0.05) ** 2)
     cloud = warp(band(n, rng, 1.5, 6), 30 * band(n, rng, 2, 6), 30 * band(n, rng, 2, 6))
-    H = 0.18 * blur(cell, 0.8) + 0.3 * blur(pebble * lift, 1.4) - 0.12 * blur(lines, 1.6) + 0.12 * band(n, rng, 1.5, 6)
-    alb = 1 + 0.025 * cloud + 0.015 * (norm01(blur(pebble, 1.5)) - 0.5) - 0.02 * (1 - cell) - 0.012 * blur(lines, 1.5)
-    rough = 0.46 + 0.05 * (1 - cell) + 0.05 * (1 - pebble) + 0.02 * cloud
-    ao = 1 - 0.1 * (1 - pebble) - 0.05 * (1 - cell) - 0.05 * blur(lines, 1.5)
+    H = 0.22 * blur(cell, 0.7) + 0.4 * blur(pebble * lift, 1.2) - 0.16 * blur(lines, 1.5) + 0.08 * band(n, rng, 1.5, 6)
+    alb = 1 + 0.03 * cloud + 0.03 * (norm01(blur(pebble, 1.2)) - 0.5) - 0.04 * (1 - cell) - 0.025 * blur(lines, 1.5)
+    rough = 0.44 + 0.07 * (1 - cell) + 0.08 * (1 - pebble) + 0.02 * cloud
+    ao = 1 - 0.2 * (1 - pebble) - 0.1 * (1 - cell) - 0.08 * blur(lines, 1.5)
     return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
 
 
@@ -1165,17 +1165,17 @@ def gen_muumu_pullup(n=2048, seed=100):
     lighter and darker clouds (lighter where the hide was stretched), a few thin pale pull-up marks
     and scuffs, and a waxy, fairly glossy sheen that varies with the clouds."""
     rng = np.random.default_rng(seed)
-    F1, F2, _ = worley(n, 300, rng, jitter=1.0, aniso=1.2, dx=0.5 * band(n, rng, 3, 12), dy=0.5 * band(n, rng, 3, 12))
+    F1, F2, _ = worley(n, 230, rng, jitter=1.0, aniso=1.2, dx=0.5 * band(n, rng, 3, 12), dy=0.5 * band(n, rng, 3, 12))
     cell = smoothstep(0.0, 0.5, F2 - F1) ** 0.7
     cloud = warp(band(n, rng, 1.2, 5), 50 * band(n, rng, 1.5, 5), 50 * band(n, rng, 1.5, 5))
     cloud2 = warp(band(n, rng, 4, 12), 20 * band(n, rng, 2, 6), 20 * band(n, rng, 2, 6))
     # pull-up marks: thin pale streaks a few cm long, mostly one way
     st = warp(band(n, rng, 5, 18, ex=6.0, angle=-25), 15 * band(n, rng, 2, 6), 15 * band(n, rng, 2, 6))
     marks = np.exp(-(st / 0.03) ** 2) * smoothstep(0.2, 0.7, band(n, rng, 2, 6))
-    H = 0.12 * blur(cell, 0.8) + 0.25 * blur(band(n, rng, 1.5, 6), 3) - 0.05 * blur(marks, 1.2)
-    alb = 1 + 0.07 * cloud + 0.025 * cloud2 + 0.06 * blur(marks, 1.0) - 0.01 * (1 - cell)
-    rough = 0.34 + 0.03 * (1 - cell) - 0.04 * cloud + 0.06 * blur(marks, 1.0)
-    ao = 1 - 0.04 * (1 - cell)
+    H = 0.3 * blur(cell, 0.7) + 0.12 * blur(band(n, rng, 1.5, 6), 3) - 0.08 * blur(marks, 1.2)
+    alb = 1 + 0.1 * cloud + 0.04 * cloud2 + 0.08 * blur(marks, 1.0) - 0.025 * (1 - cell)
+    rough = 0.34 + 0.06 * (1 - cell) - 0.05 * cloud + 0.08 * blur(marks, 1.0)
+    ao = 1 - 0.1 * (1 - cell)
     return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
 
 
@@ -1213,8 +1213,8 @@ MATERIALS = [
     M('jakomo-ople', '오플 천연면피 소가죽', '자코모', 'jakomo-ople', gen_jakomo_ople, 12, relief=0.1, swatchHex='#615346'),
     M('jakomo-lecce', '레체 이태리 천연면피 소가죽', '자코모', 'jakomo-lecce', gen_jakomo_lecce, 16, relief=0.16, swatchHex='#505337'),
     # MUUMU leather sofas: the two hides of the MUUMU 09 swatch photos (sunny 2026-11-11)
-    M('muumu-grain', '내추럴 그레인 소가죽', '뮤무', 'muumu', gen_muumu_grain, 16, relief=0.14, swatchHex='#74331D'),
-    M('muumu-pullup', '풀업 왁스 소가죽', '뮤무', 'muumu', gen_muumu_pullup, 24, relief=0.06, swatchHex='#AB660A'),
+    M('muumu-grain', '내추럴 그레인 소가죽', '뮤무', 'muumu', gen_muumu_grain, 16, relief=0.32, swatchHex='#74331D'),
+    M('muumu-pullup', '풀업 왁스 소가죽', '뮤무', 'muumu', gen_muumu_pullup, 24, relief=0.3, swatchHex='#AB660A'),
     # stone
     M('stone-carrara', '카라라 대리석', '대리석', 'stone', gen_marble_carrara, 150, size=2048, swatchHex='#E6E3DD', swatchCm=60),
     M('stone-carrara-honed', '카라라 무광 (혼드)', '대리석', 'stone', 'stone-carrara', 150, roughness=0.42, swatchHex='#E6E3DD', swatchCm=60),

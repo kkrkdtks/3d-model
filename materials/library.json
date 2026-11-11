@@ -627,9 +627,9 @@
       "tileCm": 16,
       "roughness": 1,
       "metallic": 0,
-      "albedoMean": 0.9337,
+      "albedoMean": 0.8923,
       "normalScale": 1,
-      "roughnessMean": 0.512,
+      "roughnessMean": 0.518,
       "maps": {
         "baseColor": "muumu-grain/albedo.webp",
         "normal": "muumu-grain/normal.webp",
@@ -647,9 +647,9 @@
       "tileCm": 24,
       "roughness": 1,
       "metallic": 0,
-      "albedoMean": 0.8715,
+      "albedoMean": 0.8223,
       "normalScale": 1,
-      "roughnessMean": 0.355,
+      "roughnessMean": 0.369,
       "maps": {
         "baseColor": "muumu-pullup/albedo.webp",
         "normal": "muumu-pullup/normal.webp",
