@@ -1132,6 +1132,53 @@ def gen_jakomo_lecce(n=2048, seed=96):
     return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
 
 
+# ---------------------------------------------------------------- MUUMU leather sofas
+
+def gen_muumu_grain(n=2048, seed=99):
+    """MUUMU natural grain cowhide (뮤무 내추럴 그레인 소가죽), read from the MUUMU 09 swatch photos
+    930 / 939 / 951 / 955 / 964 / 978 (the swatches are gathered and twisted in the middle; those
+    folds are the photo, not the hide, so only the flat-lying grain is used): a lightly milled
+    full-grain face with an irregular, slightly elongated natural pebble (about 2-3 mm) and fine
+    cells on it, shallow wavy grain lines, an even semi-aniline colour with a faint cloud, and a
+    soft satin sheen."""
+    rng = np.random.default_rng(seed)
+    F1, F2, _ = worley(n, 210, rng, jitter=1.0, aniso=1.15, dx=0.6 * band(n, rng, 3, 12), dy=0.6 * band(n, rng, 3, 12))
+    cell = smoothstep(0.0, 0.5, F2 - F1) ** 0.7
+    G1, G2, GID = worley(n, 64, rng, jitter=1.0, aniso=1.3, dx=0.45 * band(n, rng, 3, 10), dy=0.45 * band(n, rng, 3, 10))
+    pebble = smoothstep(0.0, 0.75, G2 - G1) ** 0.5
+    lift = (0.85 + 0.3 * rng.random(64 * 64).astype(np.float32))[GID]
+    # the wavy lines that run through a natural grain (shallow, not folds)
+    gl = warp(band(n, rng, 4, 14, ex=2.5, angle=20), 25 * band(n, rng, 2, 6), 25 * band(n, rng, 2, 6))
+    lines = np.exp(-(gl / 0.05) ** 2)
+    cloud = warp(band(n, rng, 1.5, 6), 30 * band(n, rng, 2, 6), 30 * band(n, rng, 2, 6))
+    H = 0.18 * blur(cell, 0.8) + 0.3 * blur(pebble * lift, 1.4) - 0.12 * blur(lines, 1.6) + 0.12 * band(n, rng, 1.5, 6)
+    alb = 1 + 0.025 * cloud + 0.015 * (norm01(blur(pebble, 1.5)) - 0.5) - 0.02 * (1 - cell) - 0.012 * blur(lines, 1.5)
+    rough = 0.46 + 0.05 * (1 - cell) + 0.05 * (1 - pebble) + 0.02 * cloud
+    ao = 1 - 0.1 * (1 - pebble) - 0.05 * (1 - cell) - 0.05 * blur(lines, 1.5)
+    return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
+
+
+def gen_muumu_pullup(n=2048, seed=100):
+    """MUUMU waxed pull-up cowhide (뮤무 풀업 왁스 소가죽), read from the MUUMU 09 swatch photos
+    970 / 982 / 990 (folds of the twisted swatch left out): an almost smooth, oiled and waxed face
+    with only a faint fine grain; the dye sits unevenly in the wax, so the colour drifts in soft
+    lighter and darker clouds (lighter where the hide was stretched), a few thin pale pull-up marks
+    and scuffs, and a waxy, fairly glossy sheen that varies with the clouds."""
+    rng = np.random.default_rng(seed)
+    F1, F2, _ = worley(n, 300, rng, jitter=1.0, aniso=1.2, dx=0.5 * band(n, rng, 3, 12), dy=0.5 * band(n, rng, 3, 12))
+    cell = smoothstep(0.0, 0.5, F2 - F1) ** 0.7
+    cloud = warp(band(n, rng, 1.2, 5), 50 * band(n, rng, 1.5, 5), 50 * band(n, rng, 1.5, 5))
+    cloud2 = warp(band(n, rng, 4, 12), 20 * band(n, rng, 2, 6), 20 * band(n, rng, 2, 6))
+    # pull-up marks: thin pale streaks a few cm long, mostly one way
+    st = warp(band(n, rng, 5, 18, ex=6.0, angle=-25), 15 * band(n, rng, 2, 6), 15 * band(n, rng, 2, 6))
+    marks = np.exp(-(st / 0.03) ** 2) * smoothstep(0.2, 0.7, band(n, rng, 2, 6))
+    H = 0.12 * blur(cell, 0.8) + 0.25 * blur(band(n, rng, 1.5, 6), 3) - 0.05 * blur(marks, 1.2)
+    alb = 1 + 0.07 * cloud + 0.025 * cloud2 + 0.06 * blur(marks, 1.0) - 0.01 * (1 - cell)
+    rough = 0.34 + 0.03 * (1 - cell) - 0.04 * cloud + 0.06 * blur(marks, 1.0)
+    ao = 1 - 0.04 * (1 - cell)
+    return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
+
+
 # ---------------------------------------------------------------- the library
 
 def M(id, name, cat, palette, gen, tile, **kw):
@@ -1165,6 +1212,9 @@ MATERIALS = [
     # Jakomo leather sofas: the two hides of the Jakomo pages (colours from the pages' colour charts)
     M('jakomo-ople', '오플 천연면피 소가죽', '자코모', 'jakomo-ople', gen_jakomo_ople, 12, relief=0.1, swatchHex='#615346'),
     M('jakomo-lecce', '레체 이태리 천연면피 소가죽', '자코모', 'jakomo-lecce', gen_jakomo_lecce, 16, relief=0.16, swatchHex='#505337'),
+    # MUUMU leather sofas: the two hides of the MUUMU 09 swatch photos (sunny 2026-11-11)
+    M('muumu-grain', '내추럴 그레인 소가죽', '뮤무', 'muumu', gen_muumu_grain, 16, relief=0.14, swatchHex='#74331D'),
+    M('muumu-pullup', '풀업 왁스 소가죽', '뮤무', 'muumu', gen_muumu_pullup, 24, relief=0.06, swatchHex='#AB660A'),
     # stone
     M('stone-carrara', '카라라 대리석', '대리석', 'stone', gen_marble_carrara, 150, size=2048, swatchHex='#E6E3DD', swatchCm=60),
     M('stone-carrara-honed', '카라라 무광 (혼드)', '대리석', 'stone', 'stone-carrara', 150, roughness=0.42, swatchHex='#E6E3DD', swatchCm=60),
@@ -1272,6 +1322,16 @@ JAKOMO_COLORS = {
         ('green', '레체그린', '#40524D'), ('khaki-green', '레체카키그린', '#505337'), ('dark-brown', '레체다크브라운', '#2D1D1B'),
         ('black', '레체블랙', '#262626'))]),
 }
+# the MUUMU 09 swatch photos (sunny 2026-11-11), one colour per photo, named by its code. Each chip is
+# the photo's mid-lit colour (pixels between the 55th and 75th brightness percentile, so the shadows and
+# highlights of the twisted folds are left out) taken down 1.2x with 10% more saturation (as the Jakomo
+# charts), so a lit seat looks like the swatch
+MUUMU_COLORS = {
+    'muumu': ('leather', [{'id': 'mu-' + i, 'name': i + ' ' + n, 'hex': h} for i, n, h in (
+        ('930', '테라코타', '#74331D'), ('939', '샌드 베이지', '#A89986'), ('951', '탠 브라운', '#82471D'),
+        ('955', '딥 틸', '#112226'), ('964', '라이트 그레이', '#A59F99'), ('970', '머스터드', '#AB660A'),
+        ('978', '아이보리', '#ACAAA0'), ('982', '코냑', '#6F3103'), ('990', '블랙', '#041617'))]),
+}
 METAL_EXTRA = [
     {'id': 'stainless', 'name': '스테인리스', 'hex': '#C9CACB'}, {'id': 'white', 'name': '화이트 스테인', 'hex': '#E4E4E1'},
     {'id': 'black-steel', 'name': '블랙 스테인', 'hex': '#1D1C1B'}, {'id': 'gold', 'name': '골드', 'hex': '#D4AF6A'},
@@ -1298,7 +1358,7 @@ def srgb(c):
 
 
 # lowest reference brightness (linear) per category, so light chips still come out light
-MIN_MEAN = {'가죽': 0.82, '패브릭': 0.82, '클리오네': 0.82, '자코모': 0.82, '대리석': 0.8, '나무': 0.6, '도장': 0.85, '메탈': 0.85, '기타': 0.75}
+MIN_MEAN = {'가죽': 0.82, '패브릭': 0.82, '클리오네': 0.82, '자코모': 0.82, '뮤무': 0.82, '대리석': 0.8, '나무': 0.6, '도장': 0.85, '메탈': 0.85, '기타': 0.75}
 
 
 def normal_from_height(h, strength):
@@ -1462,7 +1522,7 @@ def main(argv):
     lib['materials'] = mats
     for k, v in PALETTES.items():
         lib['palettes'][k] = v
-    for k, (base, first) in {**CLIONE_COLORS, **JAKOMO_COLORS}.items():
+    for k, (base, first) in {**CLIONE_COLORS, **JAKOMO_COLORS, **MUUMU_COLORS}.items():
         have = {c['hex'] for c in first}
         lib['palettes'][k] = first + [c for c in lib['palettes'][base] if c['hex'] not in have]
     have = {c['hex'] for c in lib['palettes']['metal']}
