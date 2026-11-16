@@ -1134,105 +1134,67 @@ def gen_jakomo_lecce(n=2048, seed=96):
 
 # ---------------------------------------------------------------- MUUMU leather sofas
 
-def gen_muumu_grain(n=2048, seed=99):
-    """MUUMU natural grain cowhide (뮤무 내추럴 그레인 소가죽), read from the MUUMU 09 swatch photos
-    930 / 939 / 951 / 955 / 964 / 978 (the swatches are gathered and twisted in the middle; those
-    folds are the photo, not the hide, so only the flat-lying grain is used): a lightly milled
-    full-grain face with an irregular, slightly elongated natural pebble (about 2-3 mm) and fine
-    cells on it, shallow wavy grain lines, an even semi-aniline colour with a faint cloud, and a
-    soft satin sheen."""
+def _crease_net(n, rng, cells, width, aniso=1.25, wob=0.7, crinkle=0.0):
+    """A net of thin creases: the borders of irregular cells. Returns (crease 0..1 on the borders,
+    dome 0..1 rising from the border to the middle of each cell, cell id)."""
+    F1, F2, ID = worley(n, cells, rng, jitter=1.0, aniso=aniso, dx=wob * band(n, rng, 3, 12), dy=wob * band(n, rng, 3, 12))
+    d = F2 - F1
+    if crinkle:  # bend the straight cell borders into the wavering lines of skin
+        wx, wy = crinkle * band(n, rng, 25, 70), crinkle * band(n, rng, 25, 70)
+        d = warp(d, wx, wy)
+        ID = None
+    return np.exp(-(d / width) ** 2), smoothstep(0.0, 0.55, d) ** 0.6, ID
+
+
+def gen_muumu_chaos(n=2048, seed=103):
+    """MUUMU CHAOS (카오스): full-grain semi-aniline cowhide with a soft two-tone finish, read from
+    sunny's high-resolution swatch photos MUUMU 09 930 / 951 / 955 / 964 (2026-11-16; the folds of the
+    gathered swatch are the photo, not the hide). The natural grain kept as it is: flat-topped,
+    polygonal pebbles of uneven size (about 2-5 mm) parted by narrow creases, each pebble cut again
+    by finer, fainter creases (1-1.5 mm), and a few longer wrinkle lines that run across several
+    pebbles. The two tone is in the grain, not in patches: the creases hold the darker tone and the
+    pebble tops are a little lighter, with a mild cloud over it. Matte to satin."""
     rng = np.random.default_rng(seed)
-    F1, F2, _ = worley(n, 210, rng, jitter=1.0, aniso=1.15, dx=0.6 * band(n, rng, 3, 12), dy=0.6 * band(n, rng, 3, 12))
-    cell = smoothstep(0.0, 0.5, F2 - F1) ** 0.7
-    G1, G2, GID = worley(n, 64, rng, jitter=1.0, aniso=1.3, dx=0.45 * band(n, rng, 3, 10), dy=0.45 * band(n, rng, 3, 10))
-    pebble = smoothstep(0.0, 0.75, G2 - G1) ** 0.5
-    lift = (0.85 + 0.3 * rng.random(64 * 64).astype(np.float32))[GID]
-    # the wavy lines that run through a natural grain (shallow, not folds)
-    gl = warp(band(n, rng, 4, 14, ex=2.5, angle=20), 25 * band(n, rng, 2, 6), 25 * band(n, rng, 2, 6))
-    lines = np.exp(-(gl / 0.05) ** 2)
+    big, dome, ID = _crease_net(n, rng, 46, 0.06, aniso=1.4, wob=1.3)
+    mid, dome2, _ = _crease_net(n, rng, 92, 0.08, aniso=1.3, wob=1.0, crinkle=5)
+    fine, _, _ = _crease_net(n, rng, 170, 0.09, aniso=1.15, wob=0.6, crinkle=3)
+    # the grain is bolder in some places and flatter in others, as on a hide
+    bold = 0.75 + 0.25 * warp(band(n, rng, 1.5, 5), 30 * band(n, rng, 2, 6), 30 * band(n, rng, 2, 6))
+    lift = (0.8 + 0.4 * rng.random(46 * 46).astype(np.float32))[ID]
+    wl = warp(band(n, rng, 5, 16, ex=3.0, angle=25), 30 * band(n, rng, 2, 6), 30 * band(n, rng, 2, 6))
+    wrinkle = np.exp(-(wl / 0.03) ** 2) * smoothstep(0.0, 0.6, band(n, rng, 3, 9))
+    crease = np.clip(big + 0.85 * mid * (1 - big) + 0.5 * fine * (1 - big) + 0.7 * wrinkle, 0, 1.3) * bold
     cloud = warp(band(n, rng, 1.5, 6), 30 * band(n, rng, 2, 6), 30 * band(n, rng, 2, 6))
-    H = 0.22 * blur(cell, 0.7) + 0.4 * blur(pebble * lift, 1.2) - 0.16 * blur(lines, 1.5) + 0.08 * band(n, rng, 1.5, 6)
-    alb = 1 + 0.03 * cloud + 0.03 * (norm01(blur(pebble, 1.2)) - 0.5) - 0.04 * (1 - cell) - 0.025 * blur(lines, 1.5)
-    rough = 0.44 + 0.07 * (1 - cell) + 0.08 * (1 - pebble) + 0.02 * cloud
-    ao = 1 - 0.2 * (1 - pebble) - 0.1 * (1 - cell) - 0.08 * blur(lines, 1.5)
+    top = blur(dome * lift, 1.0)
+    H = 0.45 * top + 0.3 * blur(dome2, 0.8) - 0.6 * blur(crease, 0.9) + 0.08 * band(n, rng, 1.5, 6) + 0.05 * blur(band(n, rng, 80, 220), 0.8)
+    alb = 1 + 0.04 * (norm01(top) - 0.5) - 0.1 * blur(crease, 1.0) + 0.03 * cloud + 0.012 * blur(band(n, rng, 60, 160), 0.6)
+    rough = 0.5 + 0.1 * blur(crease, 1.0) - 0.04 * (norm01(top) - 0.5) + 0.02 * cloud
+    ao = 1 - 0.3 * blur(crease, 1.2)
     return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
 
 
-def gen_muumu_pullup(n=2048, seed=100):
-    """MUUMU waxed pull-up cowhide (뮤무 풀업 왁스 소가죽), read from the MUUMU 09 swatch photos
-    970 / 982 / 990 (folds of the twisted swatch left out): an almost smooth, oiled and waxed face
-    with only a faint fine grain; the dye sits unevenly in the wax, so the colour drifts in soft
-    lighter and darker clouds (lighter where the hide was stretched), a few thin pale pull-up marks
-    and scuffs, and a waxy, fairly glossy sheen that varies with the clouds."""
+def gen_muumu_vintagecore(n=2048, seed=104):
+    """MUUMU VINTAGE CORE (빈티지코어): full-grain aniline pull-up cowhide finished with oil and wax,
+    read from sunny's high-resolution swatch photos MUUMU 09 970 / 978 / 982 / 990 (2026-11-16). A
+    smooth, tight face with a glossy waxed sheen; over it a fine web of hairline grain creases
+    (cells of 1.5-3 mm, the web denser in some places and nearly absent in others) that show PALE on
+    the colour (pull-up: the wax breaks light where the hide creased) and catch the light on the dark
+    colours; a few longer pale pull-up lines; the aniline colour drifts in soft clouds."""
     rng = np.random.default_rng(seed)
-    F1, F2, _ = worley(n, 230, rng, jitter=1.0, aniso=1.2, dx=0.5 * band(n, rng, 3, 12), dy=0.5 * band(n, rng, 3, 12))
-    cell = smoothstep(0.0, 0.5, F2 - F1) ** 0.7
-    cloud = warp(band(n, rng, 1.2, 5), 50 * band(n, rng, 1.5, 5), 50 * band(n, rng, 1.5, 5))
-    cloud2 = warp(band(n, rng, 4, 12), 20 * band(n, rng, 2, 6), 20 * band(n, rng, 2, 6))
-    # pull-up marks: thin pale streaks a few cm long, mostly one way
-    st = warp(band(n, rng, 5, 18, ex=6.0, angle=-25), 15 * band(n, rng, 2, 6), 15 * band(n, rng, 2, 6))
-    marks = np.exp(-(st / 0.03) ** 2) * smoothstep(0.2, 0.7, band(n, rng, 2, 6))
-    H = 0.3 * blur(cell, 0.7) + 0.12 * blur(band(n, rng, 1.5, 6), 3) - 0.08 * blur(marks, 1.2)
-    alb = 1 + 0.1 * cloud + 0.04 * cloud2 + 0.08 * blur(marks, 1.0) - 0.025 * (1 - cell)
-    rough = 0.34 + 0.06 * (1 - cell) - 0.05 * cloud + 0.08 * blur(marks, 1.0)
-    ao = 1 - 0.1 * (1 - cell)
-    return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
-
-
-def gen_muumu_vintagecore(n=2048, seed=101):
-    """MUUMU VINTAGE CORE (빈티지코어): full-grain aniline pull-up cowhide from Italy, read from the
-    MUUMU leather collection swatches 크랙페이퍼 / 크랙오닉스 / 버터스카치 / 테라코타 (sunny
-    2026-11-16). An almost smooth, oiled and waxed face (only a very fine, shallow grain); the open
-    aniline dye drifts in strong lighter and darker clouds a few cm across with a finer mottle in
-    them; the "crack" of the names: a loose net of fine hairline creases and short scratch marks that
-    show pale where the wax was pulled (clearest on the dark 크랙오닉스), dark in the light colours;
-    a waxy sheen, glossier than the other MUUMU hides."""
-    rng = np.random.default_rng(seed)
-    F1, F2, _ = worley(n, 260, rng, jitter=1.0, aniso=1.15, dx=0.5 * band(n, rng, 3, 12), dy=0.5 * band(n, rng, 3, 12))
-    cell = smoothstep(0.0, 0.5, F2 - F1) ** 0.7
+    web, _, _ = _crease_net(n, rng, 85, 0.07, aniso=1.5, wob=1.2, crinkle=7)
+    web2, _, _ = _crease_net(n, rng, 150, 0.09, aniso=1.3, wob=0.9, crinkle=5)
+    dense = smoothstep(-0.45, 0.45, warp(band(n, rng, 2, 7), 35 * band(n, rng, 2, 6), 35 * band(n, rng, 2, 6)))
+    broken = smoothstep(-0.3, 0.3, band(n, rng, 20, 60))  # the lines break up along their length
+    vein = (web * (0.4 + 0.6 * broken) + 0.6 * web2 * smoothstep(-0.3, 0.4, band(n, rng, 12, 40))) * (0.6 + 0.4 * dense)
+    pl = warp(band(n, rng, 4, 14, ex=4.0, angle=-30), 25 * band(n, rng, 2, 6), 25 * band(n, rng, 2, 6))
+    pull = np.exp(-(pl / 0.02) ** 2) * smoothstep(0.1, 0.7, band(n, rng, 2, 7))
     cloud = warp(band(n, rng, 1.2, 5), 45 * band(n, rng, 1.5, 5), 45 * band(n, rng, 1.5, 5))
     mottle = warp(band(n, rng, 5, 16), 18 * band(n, rng, 2, 6), 18 * band(n, rng, 2, 6))
-    # the crackle: fine hairline creases a few mm to 2 cm long, wavy, in two loose directions, in patches
-    def hair(angle, lo, hi):
-        f = warp(band(n, rng, lo, hi, ex=4.0, angle=angle), 12 * band(n, rng, 3, 9), 12 * band(n, rng, 3, 9))
-        return np.exp(-(f / 0.018) ** 2) * smoothstep(0.1, 0.6, band(n, rng, 6, 18))
-    crack = (hair(8, 10, 30) + 0.8 * hair(-40, 12, 34)) * smoothstep(-0.2, 0.5, band(n, rng, 1.5, 6))
-    # pale pull-up scuffs: where the wax was rubbed the dye lightens in soft streaky patches
-    scuff = smoothstep(0.25, 0.8, warp(band(n, rng, 3, 10, ex=2.5, angle=-35), 25 * band(n, rng, 2, 6), 25 * band(n, rng, 2, 6)))
-    # scratches: short thin streaks, mostly one way
-    st = warp(band(n, rng, 8, 26, ex=7.0, angle=-35), 4 * band(n, rng, 2, 6), 4 * band(n, rng, 2, 6))
-    scr = np.exp(-(st / 0.02) ** 2) * smoothstep(0.1, 0.7, band(n, rng, 2, 8)) * smoothstep(0.0, 0.5, band(n, rng, 10, 30))
-    H = 0.12 * blur(cell, 0.8) + 0.15 * blur(band(n, rng, 1.5, 6), 3) - 0.3 * blur(crack, 0.8) - 0.15 * blur(scr, 0.8)
-    alb = (1 + 0.075 * cloud + 0.045 * mottle - 0.012 * (1 - cell) + 0.05 * blur(crack, 0.7) + 0.07 * blur(scr, 0.8)
-           + 0.035 * blur(scuff, 2.0))
-    rough = 0.38 + 0.03 * (1 - cell) - 0.03 * cloud + 0.15 * blur(scr, 1.0) + 0.15 * blur(crack, 1.0) + 0.06 * blur(scuff, 2.0)
-    ao = 1 - 0.06 * (1 - cell) - 0.05 * blur(crack, 1.0)
-    return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
-
-
-def gen_muumu_chaos(n=2048, seed=102, two_tone=True):
-    """MUUMU CHAOS (카오스): full-grain semi-aniline two-tone cowhide from Italy, read from the MUUMU
-    leather collection swatches 린넨화이트 / 카본블랙 / 무스키 / 러스크 / 라테 (sunny 2026-11-16).
-    A dense, fine natural grain (tiny pores and cells well under 1 mm, a faint soft pebble under
-    them); the two-tone finish: a darker top tone wiped over the base colour, so soft-edged darker
-    patches 1-4 cm across sit beside lighter worn areas, with a fine speckle of both tones in the
-    grain; a satin, rather matte sheen (semi-aniline), duller in the darker patches."""
-    rng = np.random.default_rng(seed)
-    F1, F2, _ = worley(n, 360, rng, jitter=1.0, aniso=1.1, dx=0.5 * band(n, rng, 3, 12), dy=0.5 * band(n, rng, 3, 12))
-    cell = smoothstep(0.0, 0.45, F2 - F1) ** 0.7
-    G1, G2, _ = worley(n, 90, rng, jitter=1.0, aniso=1.2, dx=0.5 * band(n, rng, 3, 10), dy=0.5 * band(n, rng, 3, 10))
-    pebble = smoothstep(0.0, 0.7, G2 - G1) ** 0.6
-    pores = (rng.random((n, n)) > 0.985).astype(np.float32)
-    pores = blur(pores, 0.6)
-    pores = pores / max(pores.max(), 1e-6)
-    # the top tone: patches with soft but definite edges
-    t = warp(band(n, rng, 3, 12), 30 * band(n, rng, 2, 6), 30 * band(n, rng, 2, 6)) + 0.5 * band(n, rng, 10, 30)
-    tone = blur(smoothstep(-0.3, 0.5, t), 3) if two_tone else np.zeros((n, n), np.float32)
-    speck = blur(band(n, rng, 60, 180), 0.6)
-    H = 0.35 * blur(cell, 0.6) + 0.25 * blur(pebble, 1.2) - 0.25 * pores + 0.1 * blur(band(n, rng, 1.5, 6), 4)
-    alb = 1 - 0.12 * tone + 0.03 * speck - 0.04 * (1 - cell) - 0.05 * pores + 0.02 * (norm01(pebble) - 0.5)
-    rough = (0.47 if two_tone else 0.42) + 0.06 * (1 - cell) + 0.08 * tone + 0.03 * (1 - pebble)
-    ao = 1 - 0.1 * (1 - cell) - 0.08 * (1 - pebble) - 0.1 * pores
+    marks = np.clip(blur(vein, 0.7) + 0.8 * blur(pull, 0.8), 0, 1.2)
+    H = -0.5 * blur(vein, 0.8) - 0.3 * blur(pull, 0.9) + 0.25 * blur(band(n, rng, 1.5, 6), 3)
+    alb = 1 + 0.06 * cloud + 0.035 * mottle + 0.21 * marks
+    rough = 0.3 - 0.03 * cloud + 0.16 * marks
+    ao = 1 - 0.04 * blur(vein, 1.0)
     return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
 
 
@@ -1269,14 +1231,10 @@ MATERIALS = [
     # Jakomo leather sofas: the two hides of the Jakomo pages (colours from the pages' colour charts)
     M('jakomo-ople', '오플 천연면피 소가죽', '자코모', 'jakomo-ople', gen_jakomo_ople, 12, relief=0.1, swatchHex='#615346'),
     M('jakomo-lecce', '레체 이태리 천연면피 소가죽', '자코모', 'jakomo-lecce', gen_jakomo_lecce, 16, relief=0.16, swatchHex='#505337'),
-    # MUUMU leather sofas: the two hides of the MUUMU 09 swatch photos (sunny 2026-11-11)
-    M('muumu-grain', '내추럴 그레인 소가죽', '뮤무', 'muumu', gen_muumu_grain, 16, relief=0.32, swatchHex='#74331D'),
-    M('muumu-pullup', '풀업 왁스 소가죽', '뮤무', 'muumu', gen_muumu_pullup, 24, relief=0.3, swatchHex='#AB660A'),
-    # the two hides of the MUUMU LEATHER COLLECTION page (sunny 2026-11-16), each with its own colours
-    M('muumu-vintagecore', '빈티지코어 풀업 가죽', '뮤무', 'muumu-vintagecore', gen_muumu_vintagecore, 24, relief=0.28, minMean=0.62, swatchHex='#945512'),
-    M('muumu-chaos', '카오스 투톤 가죽', '뮤무', 'muumu-chaos', gen_muumu_chaos, 16, relief=0.24, minMean=0.62, swatchHex='#74401A'),
-    # the light CHAOS colours show no second tone on the MUUMU photos (LAR in 린넨화이트): same grain, even colour
-    M('muumu-chaos-light', '카오스 밝은색 가죽', '뮤무', 'muumu-chaos-light', lambda: gen_muumu_chaos(two_tone=False), 16, relief=0.24, minMean=0.62, swatchHex='#ACA9A6'),
+    # MUUMU leather sofas: the two hides of the MUUMU LEATHER COLLECTION, made from sunny's high-resolution
+    # swatch photos (2026-11-16; v1.8-v1.9.1 had four cards guessed from fewer pictures, see ALIAS in app/main.js)
+    M('muumu-vintagecore', '빈티지코어 가죽', '뮤무', 'muumu-vintagecore', gen_muumu_vintagecore, 16, size=2048, nsize=2048, relief=0.1, minMean=0.62, swatchHex='#AB660A'),
+    M('muumu-chaos', '카오스 가죽', '뮤무', 'muumu-chaos', gen_muumu_chaos, 16, relief=0.45, minMean=0.62, swatchHex='#82471D'),
     # stone
     M('stone-carrara', '카라라 대리석', '대리석', 'stone', gen_marble_carrara, 150, size=2048, swatchHex='#E6E3DD', swatchCm=60),
     M('stone-carrara-honed', '카라라 무광 (혼드)', '대리석', 'stone', 'stone-carrara', 150, roughness=0.42, swatchHex='#E6E3DD', swatchCm=60),
@@ -1384,33 +1342,23 @@ JAKOMO_COLORS = {
         ('green', '레체그린', '#40524D'), ('khaki-green', '레체카키그린', '#505337'), ('dark-brown', '레체다크브라운', '#2D1D1B'),
         ('black', '레체블랙', '#262626'))]),
 }
-# the MUUMU 09 swatch photos (sunny 2026-11-11), one colour per photo, named by its code. Each chip is
+# MUUMU LEATHER COLLECTION colours, each read from sunny's high-resolution swatch photo (code in brackets):
 # the photo's mid-lit colour (pixels between the 55th and 75th brightness percentile, so the shadows and
-# highlights of the twisted folds are left out) taken down 1.2x with 10% more saturation (as the Jakomo
-# charts), so a lit seat looks like the swatch
+# highlights of the gathered folds are left out; photo hex in the comment) taken down 1.2x with 10% more
+# saturation (as the Jakomo charts), so a lit seat looks like the swatch. 라테 has no large photo in the
+# set of 2026-11-16: it uses the earlier MUUMU 09 939 photo.
 MUUMU_COLORS = {
-    'muumu': ('leather', [{'id': 'mu-' + i, 'name': i + ' ' + n, 'hex': h} for i, n, h in (
-        ('930', '테라코타', '#74331D'), ('939', '샌드 베이지', '#A89986'), ('951', '탠 브라운', '#82471D'),
-        ('955', '딥 틸', '#112226'), ('964', '라이트 그레이', '#A59F99'), ('970', '머스터드', '#AB660A'),
-        ('978', '아이보리', '#ACAAA0'), ('982', '코냑', '#6F3103'), ('990', '블랙', '#041617'))]),
-    # the LEATHER COLLECTION swatches of the MUUMU site (sunny 2026-11-16), same reading: the
-    # 55-75th brightness percentile of each swatch (photo hex in the comment), V / 1.2, S x 1.1
     'muumu-vintagecore': ('leather', [{'id': 'vc-' + i, 'name': n, 'hex': h} for i, n, h in (
-        ('crackpaper', '크랙페이퍼', '#A3A299'),     # C4C2B9
-        ('crackonyx', '크랙오닉스', '#09191C'),      # 0D1E21
-        ('butterscotch', '버터스카치', '#945512'),   # B16D24
-        ('terracotta', '테라코타', '#672E12'))]),    # 7C3E1F
-    # (site products: NETTO = 무스키, TONDO = 러스크, NETTO HIGH = 카본블랙, LAR = 린넨화이트; MELLOWER = 버터스카치,
-    # ARCO = 크랙오닉스). The two-tone card leads with the colours that show it, the light card with the light two.
+        ('crackpaper', '크랙페이퍼', '#ACAAA0'),     # 978 CECCC1
+        ('crackonyx', '크랙오닉스', '#041617'),      # 990 071A1C
+        ('butterscotch', '버터스카치', '#AB660A'),   # 970 CD821E
+        ('terracotta', '테라코타', '#6F3103'))]),    # 982 85410C
     'muumu-chaos': ('leather', [{'id': 'ch-' + i, 'name': n, 'hex': h} for i, n, h in (
-        ('musky', '무스키', '#74401A'),              # 8B5229
-        ('rusk', '러스크', '#652612'),               # 79351F
-        ('carbonblack', '카본블랙', '#152428'),      # 1B2C30
-        ('linenwhite', '린넨화이트', '#ACA9A6'),     # CFCBC8
-        ('latte', '라테', '#AEA293'))]),             # D1C4B3
-    'muumu-chaos-light': ('leather', [{'id': 'ch-' + i, 'name': n, 'hex': h} for i, n, h in (
-        ('linenwhite', '린넨화이트', '#ACA9A6'), ('latte', '라테', '#AEA293'), ('musky', '무스키', '#74401A'),
-        ('rusk', '러스크', '#652612'), ('carbonblack', '카본블랙', '#152428'))]),
+        ('linenwhite', '린넨화이트', '#A59F99'),     # 964 C6BFB9
+        ('carbonblack', '카본블랙', '#112226'),      # 955 17292E
+        ('musky', '무스키', '#82471D'),              # 951 9C5C2E
+        ('rusk', '러스크', '#74331D'),               # 930 8B442C
+        ('latte', '라테', '#A89986'))]),             # 939 C9B9A4
 }
 METAL_EXTRA = [
     {'id': 'stainless', 'name': '스테인리스', 'hex': '#C9CACB'}, {'id': 'white', 'name': '화이트 스테인', 'hex': '#E4E4E1'},

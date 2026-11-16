@@ -36,7 +36,10 @@ let userMaterials = [];
 const allMaterials = () => [...builtin, ...userMaterials];
 // the model's own texture in a new colour: no texture of its own, the export recolours the original
 const ORIGINAL = Object.freeze({ id: 'original', name: '원래 질감', recolor: true, builtin: true, category: null });
-const materialById = (id) => (id === ORIGINAL.id ? ORIGINAL : allMaterials().find((m) => m.id === id));
+// materials of earlier versions that were merged into another (v1.10: the four MUUMU cards became the two real
+// hides), so work remembered with the old id still opens
+const ALIAS = { 'muumu-grain': 'muumu-chaos', 'muumu-chaos-light': 'muumu-chaos', 'muumu-pullup': 'muumu-vintagecore' };
+const materialById = (id) => (id === ORIGINAL.id ? ORIGINAL : allMaterials().find((m) => m.id === (ALIAS[id] || id)));
 const getBlob = async (path) => {
   const b = files.get(path);
   if (!b) throw new Error(`텍스처 파일이 없어요: ${path}`);
@@ -1163,7 +1166,7 @@ function cardMeta(m) {
   const gloss = r < 0.12 ? '거울 광택' : r < 0.28 ? '광택' : r < 0.55 ? '반광' : '매트';
   if (m.metallic) return `금속 · ${gloss}`;
   // the Clione collection mixes fabrics and leathers: its palette tells which
-  const word = { 대리석: '무늬', 나무: '결', 패브릭: '짜임', 가죽: '결' }[m.category] || { 'clione-fabric': '짜임', 'clione-leather': '결', 'jakomo-ople': '결', 'jakomo-lecce': '결', 'clione-hermosa': '결', 'clione-fjord': '결', muumu: '결', 'muumu-vintagecore': '결', 'muumu-chaos': '결', 'muumu-chaos-light': '결' }[m.palette];
+  const word = { 대리석: '무늬', 나무: '결', 패브릭: '짜임', 가죽: '결' }[m.category] || { 'clione-fabric': '짜임', 'clione-leather': '결', 'jakomo-ople': '결', 'jakomo-lecce': '결', 'clione-hermosa': '결', 'clione-fjord': '결', 'muumu-vintagecore': '결', 'muumu-chaos': '결' }[m.palette];
   if (m.maps && word && m.tileCm) return `${word} ${m.tileCm}cm`;
   if (m.maps && m.category === '기타' && m.tileCm) return `무늬 ${m.tileCm}cm`;
   return gloss;

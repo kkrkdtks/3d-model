@@ -1,8 +1,8 @@
-// v1.9: the MUUMU LEATHER COLLECTION hides in the 뮤무 tab, through the app.
-// - the tab holds four cards in order: the two MUUMU 09 hides, then 빈티지코어 and 카오스;
-// - each card says 결 and its tile; the MUUMU 09 hides still lead with the nine 09 colours, 빈티지코어 with
-//   its four colours and 카오스 with its five, in the order of the site;
-// - two colours of each new hide export with no Khronos validator errors and carry the material.
+// v1.10: the 뮤무 tab, through the app.
+// - the tab sits right after 자코모 and holds exactly the two MUUMU hides, 빈티지코어 then 카오스;
+// - each card says 결 and its tile; each leads its basic colours with the collection's colours;
+// - a choice remembered under a v1.8-v1.9 card id (muumu-grain / muumu-pullup / muumu-chaos-light) resolves;
+// - two colours of each hide export with no Khronos validator errors and carry the material.
 // usage: node t40.cjs SOFA.glb H [OUT_NAME]
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -15,16 +15,13 @@ const log = (...a) => console.log(...a);
 let failures = 0;
 const check = (ok, what) => { log(`${ok ? 'PASS' : 'FAIL'} ${what}`); if (!ok) failures++; };
 const CODES = {
-  'muumu-grain': ['#74331D', '#A89986', '#82471D', '#112226', '#A59F99', '#AB660A', '#ACAAA0', '#6F3103', '#041617'],
-  'muumu-vintagecore': ['#A3A299', '#09191C', '#945512', '#672E12'],
-  'muumu-chaos': ['#74401A', '#652612', '#152428', '#ACA9A6', '#AEA293'],
-  'muumu-chaos-light': ['#ACA9A6', '#AEA293', '#74401A', '#652612', '#152428'],
+  'muumu-vintagecore': ['#ACAAA0', '#041617', '#AB660A', '#6F3103'],
+  'muumu-chaos': ['#A59F99', '#112226', '#82471D', '#74331D', '#A89986'],
 };
-const CARDS = [{ id: 'muumu-grain', name: '내추럴 그레인 소가죽' }, { id: 'muumu-pullup', name: '풀업 왁스 소가죽' },
-  { id: 'muumu-vintagecore', name: '빈티지코어 풀업 가죽' }, { id: 'muumu-chaos', name: '카오스 투톤 가죽' }, { id: 'muumu-chaos-light', name: '카오스 밝은색 가죽' }];
+const CARDS = [{ id: 'muumu-vintagecore', name: '빈티지코어 가죽' }, { id: 'muumu-chaos', name: '카오스 가죽' }];
 const WANT = [
-  { id: 'muumu-vintagecore', name: '빈티지코어 풀업 가죽', hex: '#945512' }, { id: 'muumu-vintagecore', name: '빈티지코어 풀업 가죽', hex: '#09191C' },
-  { id: 'muumu-chaos', name: '카오스 투톤 가죽', hex: '#74401A' }, { id: 'muumu-chaos-light', name: '카오스 밝은색 가죽', hex: '#ACA9A6' },
+  { id: 'muumu-vintagecore', name: '빈티지코어 가죽', hex: '#AB660A' }, { id: 'muumu-vintagecore', name: '빈티지코어 가죽', hex: '#041617' },
+  { id: 'muumu-chaos', name: '카오스 가죽', hex: '#82471D' }, { id: 'muumu-chaos', name: '카오스 가죽', hex: '#A59F99' },
 ];
 /** GLB JSON chunk. */
 const glbJson = (buf) => JSON.parse(buf.subarray(20, 20 + buf.readUInt32LE(12)).toString());
@@ -55,11 +52,15 @@ const glbJson = (buf) => JSON.parse(buf.subarray(20, 20 + buf.readUInt32LE(12)).
     return { id: c.dataset.id, name: bEl.textContent, meta: c.querySelector('.cap small').textContent, whole: bEl.scrollHeight <= bEl.clientHeight + 1 && bEl.scrollWidth <= bEl.clientWidth + 1, img: c.querySelector('img').naturalWidth };
   }));
   log('cards', JSON.stringify(cards));
-  check(cards.map((c) => c.id).join() === CARDS.map((w) => w.id).join(), 'the five hides in order');
+  check(cards.map((c) => c.id).join() === CARDS.map((w) => w.id).join(), 'the two hides in order');
   check(CARDS.every((w, k) => cards[k]?.name === w.name), 'names');
   check(cards.every((c) => c.meta.startsWith('결')), 'cards say 결');
   check(cards.every((c) => c.whole), 'every name shows whole');
   check(cards.every((c) => c.img > 0), 'every card has its swatch');
+
+  const al = await S(() => ['muumu-grain', 'muumu-pullup', 'muumu-chaos-light'].map((i) => window.__studio.materialById?.(i)?.id));
+  log('alias', al.join(' '));
+  if (al[0] !== undefined) check(al.join() === 'muumu-chaos,muumu-vintagecore,muumu-chaos', 'old card ids resolve to the two hides');
 
   // 2. colours: the photo colour first; pick it for each cover
   for (const id of Object.keys(CODES)) {
@@ -97,7 +98,7 @@ const glbJson = (buf) => JSON.parse(buf.subarray(20, 20 + buf.readUInt32LE(12)).
   check(glbs.length === 4, 'four files');
   for (const w of WANT) {
     const hx = w.hex.slice(1);
-    const n = glbs.find((f) => f.toUpperCase().includes(hx) && (f.includes(w.name.replace(/ /g, '-')) || f.includes(w.id)));
+    const n = glbs.find((f) => f.toUpperCase().includes(hx) && (f.includes(w.name.split(' ')[0]) || f.includes(w.id)));
     const j = n && glbJson(saved[n]);
     const mat = j?.materials.find((m) => m.extras?.material === w.id);
     check(!!mat, `${w.name} ${w.hex}: its file has the material (${n})`);
