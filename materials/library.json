@@ -667,9 +667,9 @@
       "tileCm": 24,
       "roughness": 1,
       "metallic": 0,
-      "albedoMean": 0.8387,
+      "albedoMean": 0.8393,
       "normalScale": 1,
-      "roughnessMean": 0.327,
+      "roughnessMean": 0.398,
       "maps": {
         "baseColor": "muumu-vintagecore/albedo.webp",
         "normal": "muumu-vintagecore/normal.webp",
@@ -687,13 +687,33 @@
       "tileCm": 16,
       "roughness": 1,
       "metallic": 0,
-      "albedoMean": 0.893,
+      "albedoMean": 0.8311,
       "normalScale": 1,
-      "roughnessMean": 0.532,
+      "roughnessMean": 0.543,
       "maps": {
         "baseColor": "muumu-chaos/albedo.webp",
         "normal": "muumu-chaos/normal.webp",
         "orm": "muumu-chaos/orm.webp"
+      }
+    },
+    {
+      "id": "muumu-chaos-light",
+      "name": "카오스 밝은색 가죽",
+      "category": "뮤무",
+      "palette": "muumu-chaos-light",
+      "swatchHex": "#ACA9A6",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 16,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.9145,
+      "normalScale": 1,
+      "roughnessMean": 0.463,
+      "maps": {
+        "baseColor": "muumu-chaos-light/albedo.webp",
+        "normal": "muumu-chaos-light/normal.webp",
+        "orm": "muumu-chaos-light/orm.webp"
       }
     },
     {
@@ -2397,14 +2417,86 @@
     ],
     "muumu-chaos": [
       {
-        "id": "ch-linenwhite",
-        "name": "린넨화이트",
-        "hex": "#ACA9A6"
+        "id": "ch-musky",
+        "name": "무스키",
+        "hex": "#74401A"
+      },
+      {
+        "id": "ch-rusk",
+        "name": "러스크",
+        "hex": "#652612"
       },
       {
         "id": "ch-carbonblack",
         "name": "카본블랙",
         "hex": "#152428"
+      },
+      {
+        "id": "ch-linenwhite",
+        "name": "린넨화이트",
+        "hex": "#ACA9A6"
+      },
+      {
+        "id": "ch-latte",
+        "name": "라테",
+        "hex": "#AEA293"
+      },
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#1D1C1B"
+      },
+      {
+        "id": "red",
+        "name": "레드",
+        "hex": "#8A1C1E"
+      },
+      {
+        "id": "burgundy",
+        "name": "버건디",
+        "hex": "#561A20"
+      },
+      {
+        "id": "cognac",
+        "name": "코냑",
+        "hex": "#8B4A22"
+      },
+      {
+        "id": "camel",
+        "name": "카멜",
+        "hex": "#B07B48"
+      },
+      {
+        "id": "blue",
+        "name": "블루",
+        "hex": "#24467C"
+      },
+      {
+        "id": "navy",
+        "name": "네이비",
+        "hex": "#1D2840"
+      },
+      {
+        "id": "taupe",
+        "name": "토프",
+        "hex": "#7B6C60"
+      },
+      {
+        "id": "white",
+        "name": "화이트",
+        "hex": "#E8E5DE"
+      }
+    ],
+    "muumu-chaos-light": [
+      {
+        "id": "ch-linenwhite",
+        "name": "린넨화이트",
+        "hex": "#ACA9A6"
+      },
+      {
+        "id": "ch-latte",
+        "name": "라테",
+        "hex": "#AEA293"
       },
       {
         "id": "ch-musky",
@@ -2417,9 +2509,9 @@
         "hex": "#652612"
       },
       {
-        "id": "ch-latte",
-        "name": "라테",
-        "hex": "#AEA293"
+        "id": "ch-carbonblack",
+        "name": "카본블랙",
+        "hex": "#152428"
       },
       {
         "id": "black",

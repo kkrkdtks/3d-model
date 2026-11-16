@@ -17,13 +17,14 @@ const check = (ok, what) => { log(`${ok ? 'PASS' : 'FAIL'} ${what}`); if (!ok) f
 const CODES = {
   'muumu-grain': ['#74331D', '#A89986', '#82471D', '#112226', '#A59F99', '#AB660A', '#ACAAA0', '#6F3103', '#041617'],
   'muumu-vintagecore': ['#A3A299', '#09191C', '#945512', '#672E12'],
-  'muumu-chaos': ['#ACA9A6', '#152428', '#74401A', '#652612', '#AEA293'],
+  'muumu-chaos': ['#74401A', '#652612', '#152428', '#ACA9A6', '#AEA293'],
+  'muumu-chaos-light': ['#ACA9A6', '#AEA293', '#74401A', '#652612', '#152428'],
 };
 const CARDS = [{ id: 'muumu-grain', name: '내추럴 그레인 소가죽' }, { id: 'muumu-pullup', name: '풀업 왁스 소가죽' },
-  { id: 'muumu-vintagecore', name: '빈티지코어 풀업 가죽' }, { id: 'muumu-chaos', name: '카오스 투톤 가죽' }];
+  { id: 'muumu-vintagecore', name: '빈티지코어 풀업 가죽' }, { id: 'muumu-chaos', name: '카오스 투톤 가죽' }, { id: 'muumu-chaos-light', name: '카오스 밝은색 가죽' }];
 const WANT = [
   { id: 'muumu-vintagecore', name: '빈티지코어 풀업 가죽', hex: '#945512' }, { id: 'muumu-vintagecore', name: '빈티지코어 풀업 가죽', hex: '#09191C' },
-  { id: 'muumu-chaos', name: '카오스 투톤 가죽', hex: '#74401A' }, { id: 'muumu-chaos', name: '카오스 투톤 가죽', hex: '#ACA9A6' },
+  { id: 'muumu-chaos', name: '카오스 투톤 가죽', hex: '#74401A' }, { id: 'muumu-chaos-light', name: '카오스 밝은색 가죽', hex: '#ACA9A6' },
 ];
 /** GLB JSON chunk. */
 const glbJson = (buf) => JSON.parse(buf.subarray(20, 20 + buf.readUInt32LE(12)).toString());
@@ -54,7 +55,7 @@ const glbJson = (buf) => JSON.parse(buf.subarray(20, 20 + buf.readUInt32LE(12)).
     return { id: c.dataset.id, name: bEl.textContent, meta: c.querySelector('.cap small').textContent, whole: bEl.scrollHeight <= bEl.clientHeight + 1 && bEl.scrollWidth <= bEl.clientWidth + 1, img: c.querySelector('img').naturalWidth };
   }));
   log('cards', JSON.stringify(cards));
-  check(cards.map((c) => c.id).join() === CARDS.map((w) => w.id).join(), 'the four hides in order');
+  check(cards.map((c) => c.id).join() === CARDS.map((w) => w.id).join(), 'the five hides in order');
   check(CARDS.every((w, k) => cards[k]?.name === w.name), 'names');
   check(cards.every((c) => c.meta.startsWith('결')), 'cards say 결');
   check(cards.every((c) => c.whole), 'every name shows whole');
