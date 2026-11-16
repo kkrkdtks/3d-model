@@ -629,7 +629,7 @@
       "metallic": 0,
       "albedoMean": 0.7027,
       "normalScale": 1,
-      "roughnessMean": 0.323,
+      "roughnessMean": 0.517,
       "maps": {
         "baseColor": "muumu-vintagecore/albedo.webp",
         "normal": "muumu-vintagecore/normal.webp",

@@ -1193,7 +1193,7 @@ def gen_muumu_vintagecore(n=2048, seed=104):
     marks = np.clip(blur(vein, 0.7) + 0.8 * blur(pull, 0.8), 0, 1.2)
     H = -0.5 * blur(vein, 0.8) - 0.3 * blur(pull, 0.9) + 0.25 * blur(band(n, rng, 1.5, 6), 3)
     alb = 1 + 0.06 * cloud + 0.035 * mottle + 0.21 * marks
-    rough = 0.3 - 0.03 * cloud + 0.16 * marks
+    rough = 0.5 - 0.03 * cloud + 0.12 * marks  # v1.10.1: sunny asked for half the gloss (was 0.3)
     ao = 1 - 0.04 * blur(vein, 1.0)
     return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
 
