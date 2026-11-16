@@ -1179,6 +1179,63 @@ def gen_muumu_pullup(n=2048, seed=100):
     return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
 
 
+def gen_muumu_vintagecore(n=2048, seed=101):
+    """MUUMU VINTAGE CORE (빈티지코어): full-grain aniline pull-up cowhide from Italy, read from the
+    MUUMU leather collection swatches 크랙페이퍼 / 크랙오닉스 / 버터스카치 / 테라코타 (sunny
+    2026-11-16). An almost smooth, oiled and waxed face (only a very fine, shallow grain); the open
+    aniline dye drifts in strong lighter and darker clouds a few cm across with a finer mottle in
+    them; the "crack" of the names: a loose net of fine hairline creases and short scratch marks that
+    show pale where the wax was pulled (clearest on the dark 크랙오닉스), dark in the light colours;
+    a waxy sheen, glossier than the other MUUMU hides."""
+    rng = np.random.default_rng(seed)
+    F1, F2, _ = worley(n, 260, rng, jitter=1.0, aniso=1.15, dx=0.5 * band(n, rng, 3, 12), dy=0.5 * band(n, rng, 3, 12))
+    cell = smoothstep(0.0, 0.5, F2 - F1) ** 0.7
+    cloud = warp(band(n, rng, 1.2, 5), 45 * band(n, rng, 1.5, 5), 45 * band(n, rng, 1.5, 5))
+    mottle = warp(band(n, rng, 5, 16), 18 * band(n, rng, 2, 6), 18 * band(n, rng, 2, 6))
+    # the crackle: fine hairline creases a few mm to 2 cm long, wavy, in two loose directions, in patches
+    def hair(angle, lo, hi):
+        f = warp(band(n, rng, lo, hi, ex=4.0, angle=angle), 12 * band(n, rng, 3, 9), 12 * band(n, rng, 3, 9))
+        return np.exp(-(f / 0.018) ** 2) * smoothstep(0.1, 0.6, band(n, rng, 6, 18))
+    crack = (hair(8, 10, 30) + 0.8 * hair(-40, 12, 34)) * smoothstep(-0.2, 0.5, band(n, rng, 1.5, 6))
+    # pale pull-up scuffs: where the wax was rubbed the dye lightens in soft streaky patches
+    scuff = smoothstep(0.25, 0.8, warp(band(n, rng, 3, 10, ex=2.5, angle=-35), 25 * band(n, rng, 2, 6), 25 * band(n, rng, 2, 6)))
+    # scratches: short thin streaks, mostly one way
+    st = warp(band(n, rng, 8, 26, ex=7.0, angle=-35), 4 * band(n, rng, 2, 6), 4 * band(n, rng, 2, 6))
+    scr = np.exp(-(st / 0.02) ** 2) * smoothstep(0.1, 0.7, band(n, rng, 2, 8)) * smoothstep(0.0, 0.5, band(n, rng, 10, 30))
+    H = 0.12 * blur(cell, 0.8) + 0.15 * blur(band(n, rng, 1.5, 6), 3) - 0.45 * blur(crack, 0.8) - 0.15 * blur(scr, 0.8)
+    alb = (1 + 0.075 * cloud + 0.045 * mottle - 0.012 * (1 - cell) - 0.24 * blur(crack, 0.7) + 0.05 * blur(scr, 0.8)
+           + 0.035 * blur(scuff, 2.0))
+    rough = 0.31 + 0.03 * (1 - cell) - 0.03 * cloud + 0.12 * blur(scr, 1.0) + 0.1 * blur(crack, 1.0) + 0.06 * blur(scuff, 2.0)
+    ao = 1 - 0.06 * (1 - cell) - 0.12 * blur(crack, 1.0)
+    return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
+
+
+def gen_muumu_chaos(n=2048, seed=102):
+    """MUUMU CHAOS (카오스): full-grain semi-aniline two-tone cowhide from Italy, read from the MUUMU
+    leather collection swatches 린넨화이트 / 카본블랙 / 무스키 / 러스크 / 라테 (sunny 2026-11-16).
+    A dense, fine natural grain (tiny pores and cells well under 1 mm, a faint soft pebble under
+    them); the two-tone finish: a darker top tone wiped over the base colour, so soft-edged darker
+    patches 1-4 cm across sit beside lighter worn areas, with a fine speckle of both tones in the
+    grain; a satin, rather matte sheen (semi-aniline), duller in the darker patches."""
+    rng = np.random.default_rng(seed)
+    F1, F2, _ = worley(n, 360, rng, jitter=1.0, aniso=1.1, dx=0.5 * band(n, rng, 3, 12), dy=0.5 * band(n, rng, 3, 12))
+    cell = smoothstep(0.0, 0.45, F2 - F1) ** 0.7
+    G1, G2, _ = worley(n, 90, rng, jitter=1.0, aniso=1.2, dx=0.5 * band(n, rng, 3, 10), dy=0.5 * band(n, rng, 3, 10))
+    pebble = smoothstep(0.0, 0.7, G2 - G1) ** 0.6
+    pores = (rng.random((n, n)) > 0.985).astype(np.float32)
+    pores = blur(pores, 0.6)
+    pores = pores / max(pores.max(), 1e-6)
+    # the top tone: patches with soft but definite edges
+    t = warp(band(n, rng, 2, 8), 35 * band(n, rng, 2, 6), 35 * band(n, rng, 2, 6)) + 0.35 * band(n, rng, 8, 24)
+    tone = blur(smoothstep(-0.35, 0.55, t), 6)
+    speck = blur(band(n, rng, 60, 180), 0.6)
+    H = 0.35 * blur(cell, 0.6) + 0.25 * blur(pebble, 1.2) - 0.25 * pores + 0.1 * blur(band(n, rng, 1.5, 6), 4)
+    alb = 1 - 0.035 * tone + 0.03 * speck - 0.04 * (1 - cell) - 0.05 * pores + 0.02 * (norm01(pebble) - 0.5)
+    rough = 0.47 + 0.06 * (1 - cell) + 0.05 * tone + 0.03 * (1 - pebble)
+    ao = 1 - 0.1 * (1 - cell) - 0.08 * (1 - pebble) - 0.1 * pores
+    return dict(albedo=alb, height=norm01(H), roughness=rough, ao=ao)
+
+
 # ---------------------------------------------------------------- the library
 
 def M(id, name, cat, palette, gen, tile, **kw):
@@ -1215,6 +1272,9 @@ MATERIALS = [
     # MUUMU leather sofas: the two hides of the MUUMU 09 swatch photos (sunny 2026-11-11)
     M('muumu-grain', '내추럴 그레인 소가죽', '뮤무', 'muumu', gen_muumu_grain, 16, relief=0.32, swatchHex='#74331D'),
     M('muumu-pullup', '풀업 왁스 소가죽', '뮤무', 'muumu', gen_muumu_pullup, 24, relief=0.3, swatchHex='#AB660A'),
+    # the two hides of the MUUMU LEATHER COLLECTION page (sunny 2026-11-16), each with its own colours
+    M('muumu-vintagecore', '빈티지코어 풀업 가죽', '뮤무', 'muumu-vintagecore', gen_muumu_vintagecore, 24, relief=0.28, minMean=0.62, swatchHex='#945512'),
+    M('muumu-chaos', '카오스 투톤 가죽', '뮤무', 'muumu-chaos', gen_muumu_chaos, 16, relief=0.24, minMean=0.62, swatchHex='#74401A'),
     # stone
     M('stone-carrara', '카라라 대리석', '대리석', 'stone', gen_marble_carrara, 150, size=2048, swatchHex='#E6E3DD', swatchCm=60),
     M('stone-carrara-honed', '카라라 무광 (혼드)', '대리석', 'stone', 'stone-carrara', 150, roughness=0.42, swatchHex='#E6E3DD', swatchCm=60),
@@ -1331,6 +1391,19 @@ MUUMU_COLORS = {
         ('930', '테라코타', '#74331D'), ('939', '샌드 베이지', '#A89986'), ('951', '탠 브라운', '#82471D'),
         ('955', '딥 틸', '#112226'), ('964', '라이트 그레이', '#A59F99'), ('970', '머스터드', '#AB660A'),
         ('978', '아이보리', '#ACAAA0'), ('982', '코냑', '#6F3103'), ('990', '블랙', '#041617'))]),
+    # the LEATHER COLLECTION swatches of the MUUMU site (sunny 2026-11-16), same reading: the
+    # 55-75th brightness percentile of each swatch (photo hex in the comment), V / 1.2, S x 1.1
+    'muumu-vintagecore': ('leather', [{'id': 'vc-' + i, 'name': n, 'hex': h} for i, n, h in (
+        ('crackpaper', '크랙페이퍼', '#A3A299'),     # C4C2B9
+        ('crackonyx', '크랙오닉스', '#09191C'),      # 0D1E21
+        ('butterscotch', '버터스카치', '#945512'),   # B16D24
+        ('terracotta', '테라코타', '#672E12'))]),    # 7C3E1F
+    'muumu-chaos': ('leather', [{'id': 'ch-' + i, 'name': n, 'hex': h} for i, n, h in (
+        ('linenwhite', '린넨화이트', '#ACA9A6'),     # CFCBC8
+        ('carbonblack', '카본블랙', '#152428'),      # 1B2C30
+        ('musky', '무스키', '#74401A'),              # 8B5229
+        ('rusk', '러스크', '#652612'),               # 79351F
+        ('latte', '라테', '#AEA293'))]),             # D1C4B3
 }
 METAL_EXTRA = [
     {'id': 'stainless', 'name': '스테인리스', 'hex': '#C9CACB'}, {'id': 'white', 'name': '화이트 스테인', 'hex': '#E4E4E1'},

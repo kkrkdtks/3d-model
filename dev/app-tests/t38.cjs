@@ -51,9 +51,9 @@ const glbJson = (buf) => JSON.parse(buf.subarray(20, 20 + buf.readUInt32LE(12)).
     return { id: c.dataset.id, name: bEl.textContent, meta: c.querySelector('.cap small').textContent, whole: bEl.scrollHeight <= bEl.clientHeight + 1 && bEl.scrollWidth <= bEl.clientWidth + 1, img: c.querySelector('img').naturalWidth };
   }));
   log('cards', JSON.stringify(cards));
-  check(cards.map((c) => c.id).join() === WANT.map((w) => w.id).join(), 'the four covers in order');
-  check(cards.every((c, k) => c.name === WANT[k]?.name), 'names as on the brand page');
-  check(cards.every((c, k) => WANT[k] && c.meta.startsWith(WANT[k].meta)), 'fabrics say 짜임, leathers say 결');
+  check(cards.slice(0, 4).map((c) => c.id).join() === WANT.map((w) => w.id).join(), 'the four covers in order (first in the tab; v1.7 hides follow)');
+  check(WANT.every((w, k) => cards[k]?.name === w.name), 'names as on the brand page');
+  check(WANT.every((w, k) => cards[k]?.meta.startsWith(w.meta)), 'fabrics say 짜임, leathers say 결');
   check(cards.every((c) => c.whole), 'every name shows whole (신소재 바이오실 패브릭 on two lines)');
   check(cards.every((c) => c.img > 0), 'every card has its swatch');
 

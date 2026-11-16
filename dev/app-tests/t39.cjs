@@ -48,8 +48,8 @@ const glbJson = (buf) => JSON.parse(buf.subarray(20, 20 + buf.readUInt32LE(12)).
     return { id: c.dataset.id, name: bEl.textContent, meta: c.querySelector('.cap small').textContent, whole: bEl.scrollHeight <= bEl.clientHeight + 1 && bEl.scrollWidth <= bEl.clientWidth + 1, img: c.querySelector('img').naturalWidth };
   }));
   log('cards', JSON.stringify(cards));
-  check(cards.map((c) => c.id).join() === CARDS.map((w) => w.id).join(), 'the two hides in order');
-  check(cards.every((c, k) => c.name === CARDS[k]?.name), 'names');
+  check(cards.slice(0, 2).map((c) => c.id).join() === CARDS.map((w) => w.id).join(), 'the two hides in order (first in the tab)');
+  check(CARDS.every((w, k) => cards[k]?.name === w.name), 'names');
   check(cards.every((c) => c.meta.startsWith('결')), 'cards say 결');
   check(cards.every((c) => c.whole), 'every name shows whole');
   check(cards.every((c) => c.img > 0), 'every card has its swatch');

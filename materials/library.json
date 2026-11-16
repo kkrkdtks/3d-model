@@ -657,6 +657,46 @@
       }
     },
     {
+      "id": "muumu-vintagecore",
+      "name": "빈티지코어 풀업 가죽",
+      "category": "뮤무",
+      "palette": "muumu-vintagecore",
+      "swatchHex": "#945512",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 24,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.8387,
+      "normalScale": 1,
+      "roughnessMean": 0.327,
+      "maps": {
+        "baseColor": "muumu-vintagecore/albedo.webp",
+        "normal": "muumu-vintagecore/normal.webp",
+        "orm": "muumu-vintagecore/orm.webp"
+      }
+    },
+    {
+      "id": "muumu-chaos",
+      "name": "카오스 투톤 가죽",
+      "category": "뮤무",
+      "palette": "muumu-chaos",
+      "swatchHex": "#74401A",
+      "builtin": true,
+      "source": "procedural v3",
+      "tileCm": 16,
+      "roughness": 1,
+      "metallic": 0,
+      "albedoMean": 0.893,
+      "normalScale": 1,
+      "roughnessMean": 0.532,
+      "maps": {
+        "baseColor": "muumu-chaos/albedo.webp",
+        "normal": "muumu-chaos/normal.webp",
+        "orm": "muumu-chaos/orm.webp"
+      }
+    },
+    {
       "id": "stone-carrara",
       "name": "카라라 대리석",
       "category": "대리석",
@@ -2241,6 +2281,145 @@
         "id": "mu-990",
         "name": "990 블랙",
         "hex": "#041617"
+      },
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#1D1C1B"
+      },
+      {
+        "id": "red",
+        "name": "레드",
+        "hex": "#8A1C1E"
+      },
+      {
+        "id": "burgundy",
+        "name": "버건디",
+        "hex": "#561A20"
+      },
+      {
+        "id": "cognac",
+        "name": "코냑",
+        "hex": "#8B4A22"
+      },
+      {
+        "id": "camel",
+        "name": "카멜",
+        "hex": "#B07B48"
+      },
+      {
+        "id": "blue",
+        "name": "블루",
+        "hex": "#24467C"
+      },
+      {
+        "id": "navy",
+        "name": "네이비",
+        "hex": "#1D2840"
+      },
+      {
+        "id": "taupe",
+        "name": "토프",
+        "hex": "#7B6C60"
+      },
+      {
+        "id": "white",
+        "name": "화이트",
+        "hex": "#E8E5DE"
+      }
+    ],
+    "muumu-vintagecore": [
+      {
+        "id": "vc-crackpaper",
+        "name": "크랙페이퍼",
+        "hex": "#A3A299"
+      },
+      {
+        "id": "vc-crackonyx",
+        "name": "크랙오닉스",
+        "hex": "#09191C"
+      },
+      {
+        "id": "vc-butterscotch",
+        "name": "버터스카치",
+        "hex": "#945512"
+      },
+      {
+        "id": "vc-terracotta",
+        "name": "테라코타",
+        "hex": "#672E12"
+      },
+      {
+        "id": "black",
+        "name": "블랙",
+        "hex": "#1D1C1B"
+      },
+      {
+        "id": "red",
+        "name": "레드",
+        "hex": "#8A1C1E"
+      },
+      {
+        "id": "burgundy",
+        "name": "버건디",
+        "hex": "#561A20"
+      },
+      {
+        "id": "cognac",
+        "name": "코냑",
+        "hex": "#8B4A22"
+      },
+      {
+        "id": "camel",
+        "name": "카멜",
+        "hex": "#B07B48"
+      },
+      {
+        "id": "blue",
+        "name": "블루",
+        "hex": "#24467C"
+      },
+      {
+        "id": "navy",
+        "name": "네이비",
+        "hex": "#1D2840"
+      },
+      {
+        "id": "taupe",
+        "name": "토프",
+        "hex": "#7B6C60"
+      },
+      {
+        "id": "white",
+        "name": "화이트",
+        "hex": "#E8E5DE"
+      }
+    ],
+    "muumu-chaos": [
+      {
+        "id": "ch-linenwhite",
+        "name": "린넨화이트",
+        "hex": "#ACA9A6"
+      },
+      {
+        "id": "ch-carbonblack",
+        "name": "카본블랙",
+        "hex": "#152428"
+      },
+      {
+        "id": "ch-musky",
+        "name": "무스키",
+        "hex": "#74401A"
+      },
+      {
+        "id": "ch-rusk",
+        "name": "러스크",
+        "hex": "#652612"
+      },
+      {
+        "id": "ch-latte",
+        "name": "라테",
+        "hex": "#AEA293"
       },
       {
         "id": "black",
