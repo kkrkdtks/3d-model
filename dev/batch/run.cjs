@@ -161,6 +161,7 @@ const log = (...a) => console.log(...a);
     st.S.catalog = true;
     st.renderExport();
   }, job);
+  log('size choices:', JSON.stringify(await S(() => { const r = window.__studio.sizeChoices(); return { bestMB: +(r.best / 1048576).toFixed(1), choices: r.choices }; })));
   const saved = [];
   await p.exposeFunction('saveOut', (fname, b64) => {
     const buf = Buffer.from(b64, 'base64');

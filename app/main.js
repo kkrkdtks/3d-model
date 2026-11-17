@@ -55,7 +55,9 @@ const SEL_COLOR = '#ff8a3d';
 // the piece below a height cut, shown while choosing the height
 const CUT_COLOR = '#2f7ee0';
 // file size targets offered on the export panel (MB, 0 = best quality, no limit); any other number can be typed
-const SIZE_TARGETS = [-1, 0, 20, 10, 5]; // -1: no compression
+// -1: no compression, 0: best quality; the MB choices under them follow the model (sizeChoices)
+const SIZE_TARGETS = [-1, 0];
+const MB_STEPS = [50, 40, 30, 20, 15, 10, 8, 5, 4, 3, 2, 1];
 const validTarget = (v) => typeof v === 'number' && Number.isFinite(v) && v >= -1 && v <= 500;
 // geometry detail of the on-screen previews (the saved files follow the size target instead)
 const QUALITY = {
@@ -95,7 +97,7 @@ const S = {
   selection: new Set(), groups: [], active: null, view: 'material', hover: -1, compare: false,
   tab: '가죽', quality: 'standard', compat: false,
   // file size target per saved file, MB (0: best quality, no limit); see SIZE_TARGETS
-  sizeTarget: 10, prefix: '', photos: true,
+  sizeTarget: 0, prefix: '', photos: true,
   // product photos: directions, background (transparent PNG or white JPG), size, a small list thumbnail too
   photo: { angles: ['current'], bg: 'transparent', size: '1600x1200', thumb: false }, catalog: true,
   // file names: 'ko' as the groups and materials are called, 'en' letters and digits only (web services, marketplaces)
@@ -1326,6 +1328,8 @@ function renderExport() {
   el.classList.remove('dim');
   const { active, count } = variantPlan();
   const needH = !S.size.h;
+  const sizes = sizeChoices();
+  const custom = S.sizeCustom || (S.sizeTarget > 0 && !sizes.choices.includes(S.sizeTarget));
   const off = S.exporting || needH ? 'disabled' : '';
   const r = realSize();
   const per = (g) => [g.choices.length ? `재질 ${g.choices.length}` : '', g.sizes.length ? `크기 ${g.sizes.length}` : ''].filter(Boolean).join('·');
@@ -1336,10 +1340,10 @@ function renderExport() {
       : `<p class="note">저장 크기 W ${fmtInt(r.w)} × D ${fmtInt(r.d)} × H ${fmtInt(r.h)}mm${S.groups.some((x) => x.sizes.length) ? ' (크기를 바꾼 부분은 변형마다 그 크기로)' : ''} · 미터 단위, 바닥 가운데 기준${S.liftMm ? ` · 바닥에서 ${fmtInt(S.liftMm)}mm 띄움` : ''}</p>`}
     ${count > 40 ? `<p class="warn-text">파일이 ${count}개예요. 시간이 꽤 걸릴 수 있어요.</p>` : ''}
     <div class="field"><span class="label">파일 크기 (파일 하나의 최대 용량)</span>
-      <div class="seg flat" role="group">${SIZE_TARGETS.map((mb) => `<button type="button" data-action="size-target" data-mb="${mb}" class="${mb === S.sizeTarget && !S.sizeCustom ? 'on' : ''}">${mb > 0 ? `${mb}MB` : mb < 0 ? '압축 안 함' : '최고 화질'}</button>`).join('')}
-        <button type="button" data-action="size-target" data-mb="custom" class="${!SIZE_TARGETS.includes(S.sizeTarget) || S.sizeCustom ? 'on' : ''}">직접</button></div>
-      ${!SIZE_TARGETS.includes(S.sizeTarget) || S.sizeCustom ? `<div class="input-row"><input class="input num short" id="sizeTargetMb" inputmode="decimal" value="${S.sizeTarget > 0 ? S.sizeTarget : ''}"><span class="unit">MB 이하</span></div>` : ''}
-      <p class="note">${sizeTargetNote()}</p></div>
+      <div class="seg flat" role="group">${[...SIZE_TARGETS, ...sizes.choices].map((mb) => `<button type="button" data-action="size-target" data-mb="${mb}" class="${mb === S.sizeTarget && !S.sizeCustom ? 'on' : ''}">${mb > 0 ? `${mb}MB` : mb < 0 ? '압축 안 함' : '최고 화질'}</button>`).join('')}
+        <button type="button" data-action="size-target" data-mb="custom" class="${custom ? 'on' : ''}">직접</button></div>
+      ${custom ? `<div class="input-row"><input class="input num short" id="sizeTargetMb" inputmode="decimal" value="${S.sizeTarget > 0 ? S.sizeTarget : ''}"><span class="unit">MB 이하</span></div>` : ''}
+      <p class="note">${sizeTargetNote(sizes.best)}</p></div>
     <label class="check"><input type="checkbox" id="photos" ${S.photos ? 'checked' : ''}>
       <span>제품 사진도 같이 저장<small>변형마다 ${photoSummary()}. 폴더나 ZIP에는 변형 목록(엑셀용 CSV, 웹 등록용 JSON)${S.catalog ? '과 카탈로그 HTML' : ''}도 같이 들어가요.</small></span></label>
     <div class="field"><label for="liftMm">바닥에서 띄우기</label>
@@ -1381,11 +1385,58 @@ function renderExport() {
   saveWorkSoon();
 }
 
+/**
+ * Rough size (bytes) of one saved file of the current plan at the best step and at the lightest one
+ * (same steps as the worker's LEVELS): triangles, the original's textures that stay, recoloured
+ * colour maps, new materials. Good to about ±30%: enough to offer sizes that make sense for this model.
+ */
+function sizeEstimate() {
+  const total = S.faceLabels?.length || 0;
+  const { active } = variantPlan();
+  const mats = active.map((g) => g.choices.map((c) => materialById(c.materialId)));
+  const recolor = mats.some((m) => m.some((d) => d?.recolor));
+  const reskins = active.filter((g, i) => mats[i].some((d) => d && !d.recolor)).length;
+  const allNew = active.length && mats.every((m) => m.length && m.every((d) => d && !d.recolor));
+  const covered = new Set(active.flatMap((g) => g.parts));
+  let rest = 0;
+  for (const l of S.faceLabels || []) if (!covered.has(l)) rest++;
+  const small = total && rest / total < 0.15;
+  const texs = [...(S.info?.textures || [])].sort((a, b) => b.width * b.height - a.width * a.height);
+  const bpp = (q) => 0.25 * Math.max(0.05, (q - 0.8) / 0.12) ** 1.3;
+  const at = (tris, color, normal, cq, nq) => {
+    let b = Math.min(total, tris) * 7.5 + reskins * 0.55 * 1048576;
+    texs.forEach((t, i) => {
+      const isColor = i === 0, cap = small && (allNew || (isColor && !active.some((g, k) => mats[k].some((d) => !d)))) ? 2048 : isColor ? color : normal;
+      const side = Math.min(Math.max(t.width, t.height), cap);
+      b += side ** 2 * (isColor ? bpp(cq) : 0.06 * bpp(nq) / 0.25);
+    });
+    if (recolor && texs[0]) b += Math.min(Math.max(texs[0].width, texs[0].height), color) ** 2 * bpp(cq);
+    return b;
+  };
+  return { best: at(1200000, 8192, 4096, 0.92, 0.95), least: at(50000, 1024, 1024, 0.8, 0.8) };
+}
+
+/** MB choices that are really smaller than the best quality of this model: about 60%, 30%, 15% of it. */
+function sizeChoices() {
+  const { best, least } = sizeEstimate();
+  const out = [];
+  let lim = (best / 1048576) * 0.6;
+  for (let k = 0; k < 3; k++) {
+    const mb = MB_STEPS.find((m) => m <= lim && m * 1048576 >= least * 1.1);
+    if (!mb || out.includes(mb)) break;
+    out.push(mb);
+    lim = mb * 0.55;
+  }
+  return { best, choices: out };
+}
+
 /** What the chosen size target means, in words under the buttons. */
-function sizeTargetNote() {
+function sizeTargetNote(best) {
   const orig = S.file ? ` (원본 ${fmtMB(S.file.size)})` : '';
+  const about = `지금 고른 재질로 최고 화질이면 파일 하나가 약 ${fmtMB(best)}예요`;
   if (S.sizeTarget < 0) return `삼각형·텍스처를 원본 그대로 두고 압축하지 않아요${orig}. 색을 바꾼 텍스처만 원본 크기 JPG로 저장해요. 파일이 원본만큼 또는 더 커서(수십 MB) 공간에 놓을 때 늦게 뜰 수 있어요.`;
-  if (!S.sizeTarget) return `원본의 삼각형과 텍스처(최대 8K)를 거의 그대로 살려요${orig}. 파일이 크면 공간에 놓을 때 늦게 뜰 수 있어요.`;
+  if (S.sizeTarget > 0 && S.sizeTarget * 1048576 >= best) return `${about}. ${S.sizeTarget}MB면 최고 화질로 저장될 거예요.`;
+  if (!S.sizeTarget) return `${about}${orig}. 더 작게 하려면 옆의 MB를 고르세요. 원본의 삼각형과 텍스처(최대 8K)를 거의 그대로 살려요.`;
   return `파일마다 ${S.sizeTarget}MB 안에서 가장 좋은 화질로 저장해요${orig}. 숫자가 작을수록 가까이 볼 때 가죽 결·주름이 흐려지고, 클수록 원본에 가까워요.`;
 }
 
@@ -2547,4 +2598,4 @@ bindDrop($('#photoDrop'), loadPhoto);
   refreshAll();
 })();
 
-window.__studio = { S, openFile, runExport, viewer, newGroup, addChoice, updatePreview, setActive, call, saveWorkNow, setCompare, refreshAll, savePrefs, renderExport, qcReport, variantName, materialById, setPatternAngle, openEditDialog, savePhotoMaterial, tileUV, currentXf, store, followersOf };
+window.__studio = { S, openFile, runExport, viewer, newGroup, addChoice, updatePreview, setActive, call, saveWorkNow, setCompare, refreshAll, savePrefs, renderExport, qcReport, variantName, materialById, setPatternAngle, openEditDialog, savePhotoMaterial, tileUV, currentXf, store, followersOf, sizeChoices };
