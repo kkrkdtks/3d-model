@@ -55,8 +55,8 @@ const SEL_COLOR = '#ff8a3d';
 // the piece below a height cut, shown while choosing the height
 const CUT_COLOR = '#2f7ee0';
 // file size targets offered on the export panel (MB, 0 = best quality, no limit); any other number can be typed
-const SIZE_TARGETS = [0, 20, 10, 5];
-const validTarget = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 500;
+const SIZE_TARGETS = [-1, 0, 20, 10, 5]; // -1: no compression
+const validTarget = (v) => typeof v === 'number' && Number.isFinite(v) && v >= -1 && v <= 500;
 // geometry detail of the on-screen previews (the saved files follow the size target instead)
 const QUALITY = {
   high: { label: '고품질', simplify: 0.4, keepSimplify: 0.5, note: '아주 가까이 봐도 원본과 같아요. 파일이 조금 커요.' },
@@ -1336,9 +1336,9 @@ function renderExport() {
       : `<p class="note">저장 크기 W ${fmtInt(r.w)} × D ${fmtInt(r.d)} × H ${fmtInt(r.h)}mm${S.groups.some((x) => x.sizes.length) ? ' (크기를 바꾼 부분은 변형마다 그 크기로)' : ''} · 미터 단위, 바닥 가운데 기준${S.liftMm ? ` · 바닥에서 ${fmtInt(S.liftMm)}mm 띄움` : ''}</p>`}
     ${count > 40 ? `<p class="warn-text">파일이 ${count}개예요. 시간이 꽤 걸릴 수 있어요.</p>` : ''}
     <div class="field"><span class="label">파일 크기 (파일 하나의 최대 용량)</span>
-      <div class="seg flat" role="group">${SIZE_TARGETS.map((mb) => `<button type="button" data-action="size-target" data-mb="${mb}" class="${mb === S.sizeTarget && !S.sizeCustom ? 'on' : ''}">${mb ? `${mb}MB` : '최고 화질'}</button>`).join('')}
+      <div class="seg flat" role="group">${SIZE_TARGETS.map((mb) => `<button type="button" data-action="size-target" data-mb="${mb}" class="${mb === S.sizeTarget && !S.sizeCustom ? 'on' : ''}">${mb > 0 ? `${mb}MB` : mb < 0 ? '압축 안 함' : '최고 화질'}</button>`).join('')}
         <button type="button" data-action="size-target" data-mb="custom" class="${!SIZE_TARGETS.includes(S.sizeTarget) || S.sizeCustom ? 'on' : ''}">직접</button></div>
-      ${!SIZE_TARGETS.includes(S.sizeTarget) || S.sizeCustom ? `<div class="input-row"><input class="input num short" id="sizeTargetMb" inputmode="decimal" value="${S.sizeTarget || ''}"><span class="unit">MB 이하</span></div>` : ''}
+      ${!SIZE_TARGETS.includes(S.sizeTarget) || S.sizeCustom ? `<div class="input-row"><input class="input num short" id="sizeTargetMb" inputmode="decimal" value="${S.sizeTarget > 0 ? S.sizeTarget : ''}"><span class="unit">MB 이하</span></div>` : ''}
       <p class="note">${sizeTargetNote()}</p></div>
     <label class="check"><input type="checkbox" id="photos" ${S.photos ? 'checked' : ''}>
       <span>제품 사진도 같이 저장<small>변형마다 ${photoSummary()}. 폴더나 ZIP에는 변형 목록(엑셀용 CSV, 웹 등록용 JSON)${S.catalog ? '과 카탈로그 HTML' : ''}도 같이 들어가요.</small></span></label>
@@ -1384,6 +1384,7 @@ function renderExport() {
 /** What the chosen size target means, in words under the buttons. */
 function sizeTargetNote() {
   const orig = S.file ? ` (원본 ${fmtMB(S.file.size)})` : '';
+  if (S.sizeTarget < 0) return `삼각형·텍스처를 원본 그대로 두고 압축하지 않아요${orig}. 색을 바꾼 텍스처만 원본 크기 JPG로 저장해요. 파일이 원본만큼 또는 더 커서(수십 MB) 공간에 놓을 때 늦게 뜰 수 있어요.`;
   if (!S.sizeTarget) return `원본의 삼각형과 텍스처(최대 8K)를 거의 그대로 살려요${orig}. 파일이 크면 공간에 놓을 때 늦게 뜰 수 있어요.`;
   return `파일마다 ${S.sizeTarget}MB 안에서 가장 좋은 화질로 저장해요${orig}. 숫자가 작을수록 가까이 볼 때 가죽 결·주름이 흐려지고, 클수록 원본에 가까워요.`;
 }
@@ -1392,7 +1393,7 @@ function sizeTargetNote() {
 function fileRow(r) {
   const q = qcReport(r.qc);
   const mark = { ok: '✓', info: '✓', warn: '⚠', error: '✗', none: '✓' }[q.status];
-  return `<div class="file-row ${q.status}"><span class="ok">${mark}</span><span class="fname" title="${esc(r.name)}">${esc(r.name)}</span><span class="fsize">${fmtMB(r.size)}${r.level ? ` · ${r.level.step === r.level.of ? '최고 화질' : `화질 ${r.level.step}/${r.level.of}`}${r.level.fits ? '' : ' (목표보다 큼)'}` : ''}</span>
+  return `<div class="file-row ${q.status}"><span class="ok">${mark}</span><span class="fname" title="${esc(r.name)}">${esc(r.name)}</span><span class="fsize">${fmtMB(r.size)}${r.level ? ` · ${r.level.raw ? '압축 안 함' : r.level.step === r.level.of ? '최고 화질' : `화질 ${r.level.step}/${r.level.of}`}${r.level.fits ? '' : ' (목표보다 큼)'}` : ''}</span>
     ${q.line ? `<span class="fqc" title="${esc(q.title)}">${esc(q.line)}${q.notes.length ? ` · ⓘ ${esc(q.notes.join(' · '))}` : ''}</span>` : ''}</div>`;
 }
 
@@ -1625,7 +1626,7 @@ async function runExport(kind) {
     const savedSizes = await store.getKV(savedSizesKey(S.file), []).catch(() => []);
     const res = await call('export', {
       names, xf: currentXf(), axes: S.axes, app: `가구 스킨 스튜디오 ${VERSION}`, avoidSizes: savedSizes,
-      targetBytes: Math.round(S.sizeTarget * 1048576),
+      targetBytes: Math.max(0, Math.round(S.sizeTarget * 1048576)), raw: S.sizeTarget < 0,
       meshopt: !S.compat, compat: S.compat, liftMm: S.liftMm, groups, variants: pieceVariants, textures,
     }, {
       onProgress: (p) => busy(p.text, p.frac),

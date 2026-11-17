@@ -745,6 +745,14 @@ export async function encodeVariant(io, doc, opts = {}) {
   const copy = cloneDocument(doc);
   dropUnusedMaterials(copy);
   liftDocument(copy, liftM);
+  if (opts.raw) {
+    // no compression: plain float geometry, images as they are
+    await copy.transform(prune({ keepExtras: true }));
+    for (const ext of copy.getRoot().listExtensionsUsed())
+      if (ext.extensionName === 'EXT_meshopt_compression' || ext.extensionName === 'KHR_mesh_quantization') ext.dispose();
+    tidyExtensions(copy, false);
+    return io.writeBinary(copy);
+  }
   if (meshopt) {
     await MeshoptEncoder.ready;
     // best steps: texture coordinates in 14 bits, so an 8K texture is still sampled where it should be
