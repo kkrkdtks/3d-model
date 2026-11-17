@@ -9,6 +9,7 @@
 //   "w": 1600,                                      // optional instead of h: real width drives the scale
 //   "prefix": "dio_ceramic_table",                  // file name start
 //   "liftMm": 40, "naming": "ko" | "en", "photos": true,
+//   "sizeTargetMb": 10,                             // file size target per file (0: best quality); app default otherwise
 //   "groups": [                                     // in order; every part goes to the first group that takes it
 //     { "name": "상판", "select": "top", "sizes": [[1400, 800], [1600, 900]],
 //       "choices": [{ "material": "stone-ceramic", "hex": "#C6C6BD", "name": "샌드그레이" }] },
@@ -152,6 +153,7 @@ const log = (...a) => console.log(...a);
   await S((job) => {
     const st = window.__studio;
     st.S.liftMm = job.liftMm ?? 40;
+    if (job.sizeTargetMb != null) st.S.sizeTarget = job.sizeTargetMb; // MB per file, 0 = best quality
     st.S.naming = job.naming || 'ko';
     if (job.prefix) st.S.prefix = job.prefix;
     st.S.photos = job.photos !== false;
@@ -169,9 +171,9 @@ const log = (...a) => console.log(...a);
   t = Date.now();
   await S(() => window.__studio.runExport('folder')).catch((e) => log('export error', e.message));
   await p.waitForTimeout(1000);
-  const qc = await S(() => window.__studio.S.results.map((r) => ({ name: r.name, bytes: r.bytes ?? r.size, level: r.qc?.level, errors: r.qc?.check?.errors ?? null, notes: r.qc?.notes })));
+  const qc = await S(() => window.__studio.S.results.map((r) => ({ name: r.name, bytes: r.bytes ?? r.size, step: r.level?.step, level: r.qc?.level, errors: r.qc?.check?.errors ?? null, notes: r.qc?.notes })));
   log(`exported ${qc.length} variants in ${((Date.now() - t) / 1000).toFixed(0)} s`);
-  for (const r of qc) log(`  ${r.name}  errors ${r.errors}  ${r.level || ''}`);
+  for (const r of qc) log(`  ${r.name}  ${(r.bytes / 1048576).toFixed(1)}MB step ${r.step}  errors ${r.errors}  ${r.level || ''}`);
   fs.writeFileSync(`${OUT}/_qc.json`, JSON.stringify(qc, null, 2));
   fs.rmSync(tmp, { force: true });
   log('files:', saved.length);

@@ -499,6 +499,7 @@ function settleNormals(p, iters = 4) {
  * extent. Its own normals count too, so smooth and glossy areas keep their shading.
  */
 function simplifyKept(p, o) {
+  if (o.keepSimplify >= 1) return; // best quality: every triangle stays
   const P = p.getAttribute('POSITION'), N = p.getAttribute('NORMAL');
   const box = bboxOf(P.getArray());
   const I = p.getIndices();
@@ -740,20 +741,21 @@ function dropUnusedMaterials(doc) {
  * liftM raises the furniture off the floor (see liftDocument) in the written copy only.
  */
 export async function encodeVariant(io, doc, opts = {}) {
-  const { meshopt = true, liftM = 0 } = opts;
+  const { meshopt = true, liftM = 0, fineNormals = false } = opts;
   const copy = cloneDocument(doc);
   dropUnusedMaterials(copy);
   liftDocument(copy, liftM);
   if (meshopt) {
     await MeshoptEncoder.ready;
-    await copy.transform(prune({ keepExtras: true }), reorder({ encoder: MeshoptEncoder }), quantize());
+    // best steps: texture coordinates in 14 bits, so an 8K texture is still sampled where it should be
+    await copy.transform(prune({ keepExtras: true }), reorder({ encoder: MeshoptEncoder }), quantize(fineNormals ? { quantizeTexcoord: 14 } : {}));
     // FILTER stores normals in 8 bits (octahedral), fine for most finishes but visible as sparkle and
     // broken highlights on a mirror-like one; QUANTIZE keeps them at 10 bits (a few % bigger file)
-    const fine = copy.getRoot().listMaterials().some(glossyMaterial);
+    const fine = fineNormals || copy.getRoot().listMaterials().some(glossyMaterial);
     const method = EXTMeshoptCompression.EncoderMethod[fine ? 'QUANTIZE' : 'FILTER'];
     copy.createExtension(EXTMeshoptCompression).setRequired(true).setEncoderOptions({ method });
   } else {
-    await copy.transform(prune({ keepExtras: true }), quantize());
+    await copy.transform(prune({ keepExtras: true }), quantize(fineNormals ? { quantizeTexcoord: 14 } : {}));
   }
   copy.createExtension(KHRMeshQuantization).setRequired(true);
   tidyExtensions(copy, meshopt);

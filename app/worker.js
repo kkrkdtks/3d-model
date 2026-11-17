@@ -5,10 +5,10 @@
 // Messages out: { id, ok: true, result } | { id, ok: false, error } | { id, progress: { text, frac } }
 //               | { id, file: { name, bytes, sizeMm, qc } } while exporting
 import { ImageUtils, WebIO } from '@gltf-transform/core';
-import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
+import { ALL_EXTENSIONS, EXTTextureWebP } from '@gltf-transform/extensions';
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 import {
-  DEFAULTS, applyToGroup, baseColorSource, compressKeptTextures, createMaterial, cutPart, encodeVariant,
+  DEFAULTS, applyToGroup, baseColorSource, createMaterial, cutPart, encodeVariant,
   faceColors, facesOfParts, GLOSS_FAIR, groupPrimitive, isGlossy, partStats, plainFloats, prepareOutput,
   colorLabel, hexToLinear, releaseSource, reskinGeometry, setVariant, srgbToLinear, stampGlb, triangleSources, weldedSources,
 } from '../core/skin.js';
@@ -458,26 +458,102 @@ function outerSizeMm(doc, axes) {
 }
 
 /**
+ * Quality steps for "file size target", best first. tris: triangles the whole model may keep
+ * (never more than it has); color: longest side of colour (and glow) textures; normal / other:
+ * normal maps and the rest (roughness); q*: WebP/JPEG quality; fine: 10-bit normals in the geometry.
+ * The export tries the best step and goes down only as far as the size target needs.
+ */
+const LEVELS = [
+  { tris: 1200000, color: 8192, normal: 4096, other: 4096, cq: 0.92, nq: 0.95, oq: 0.92, fine: true },
+  { tris: 800000, color: 6144, normal: 4096, other: 4096, cq: 0.9, nq: 0.93, oq: 0.9, fine: true },
+  { tris: 500000, color: 4096, normal: 4096, other: 2048, cq: 0.92, nq: 0.9, oq: 0.9, fine: true },
+  { tris: 350000, color: 4096, normal: 3072, other: 2048, cq: 0.88, nq: 0.88, oq: 0.88, fine: true },
+  { tris: 250000, color: 4096, normal: 2048, other: 2048, cq: 0.85, nq: 0.88, oq: 0.85, fine: false },
+  { tris: 180000, color: 3072, normal: 2048, other: 2048, cq: 0.85, nq: 0.85, oq: 0.85, fine: false },
+  { tris: 120000, color: 2048, normal: 2048, other: 1024, cq: 0.85, nq: 0.85, oq: 0.85, fine: false },
+  { tris: 80000, color: 2048, normal: 1024, other: 1024, cq: 0.8, nq: 0.85, oq: 0.8, fine: false },
+  { tris: 50000, color: 1024, normal: 1024, other: 1024, cq: 0.8, nq: 0.8, oq: 0.8, fine: false },
+];
+
+/** Which kind of map each texture is: 'normal', 'color' (base colour or glow) or 'other'. */
+function textureSlots(doc) {
+  const slot = new Map();
+  for (const m of doc.getRoot().listMaterials()) {
+    if (m.getNormalTexture()) slot.set(m.getNormalTexture(), 'normal');
+    for (const t of [m.getBaseColorTexture(), m.getEmissiveTexture()]) if (t && !slot.has(t)) slot.set(t, 'color');
+  }
+  return slot;
+}
+
+/**
  * Write one GLB per combination of choices.
- * args: { names, xf, axes, quality: { simplify, keepSimplify }, keptTextureSize, meshopt, compat,
+ * args: { names, xf, axes, targetBytes, level, quality?, keptTextureSize?, meshopt, compat,
  *         groups: [{ key, name, parts, sizeBox?, hold?, minY?, colorFrom? }],  (pieces, see core/size outputPieces:
  *           sizeBox = box in metres the resize is measured on, hold / minY in metres, colorFrom = parts the
  *           original colour is measured on)
  *         variants: [[{ group, def | null, color, rotate, size: { w, d } | null }]],  (def null = keep the original look)
  *         textures: { path: Uint8Array } }
+ * targetBytes: each file at most this big (0: best quality, no limit). The export starts at the best
+ * step (or args.level) and steps down (LEVELS) until a file fits; later files start at that step.
  * The file is in metres (xf), standing on the floor.
  */
 async function exportVariants(args, progress, sendFile) {
   const io = await getIO();
   const T = timer();
-  const { groups, variants, textures } = args;
+  const { variants } = args;
   const avoid = new Set(args.avoidSizes || []); // byte sizes of files saved before from this model
+  const target = Math.max(0, +args.targetBytes || 0);
+  let li = Math.min(LEVELS.length - 1, Math.max(0, +args.level || 0));
+  // a first guess from rough bytes per triangle and per texel, so a big model does not build every
+  // step on the way down (each step re-reads and re-simplifies the whole model)
+  if (target && !args.level) {
+    const total = state.faceLabels.length, colours = variants.some((v) => v.some((c) => c.def?.recolor)) ? 1.6 : 1;
+    const bpp = (q) => 0.25 * Math.max(0.05, (q - 0.8) / 0.12) ** 1.3; // WebP bytes per texel of a leather colour map
+    const guess = (L) => Math.min(total, L.tris) * 7.5 + colours * L.color ** 2 * bpp(L.cq) + L.normal ** 2 * 0.06 * bpp(L.nq) / 0.25 + L.other ** 2 * 0.03;
+    while (li < LEVELS.length - 1 && guess(LEVELS[li]) > target * 1.15) li++;
+  }
+  let lv = await buildLevel(io, args, li, progress, T);
+  const files = [];
+  for (let i = 0; i < variants.length; i++) {
+    let out;
+    for (;;) {
+      progress(`변형 ${i + 1}/${variants.length} 만드는 중${li ? ` (화질 ${LEVELS.length - li}단계)` : ''}`, 0.25 + (0.75 * i) / variants.length);
+      out = await encodeOne(io, args, lv, i, avoid, T);
+      if (!target || out.bytes.byteLength <= target || li === LEVELS.length - 1) break;
+      // too big: step down (further when far over), rebuild, try again
+      const over = out.bytes.byteLength / target;
+      li = Math.min(LEVELS.length - 1, li + (over > 3 ? 3 : over > 1.7 ? 2 : 1));
+      progress(`목표 크기에 맞추는 중 (화질 ${LEVELS.length - li}단계)`, 0.25 + (0.75 * i) / variants.length);
+      lv = await buildLevel(io, args, li, progress, T);
+    }
+    const { bytes, sizeMm } = out;
+    avoid.add(bytes.byteLength);
+    progress(`변형 ${i + 1}/${variants.length} 검사 중`, 0.25 + (0.75 * (i + 0.8)) / variants.length);
+    const qc = args.inspect === false ? null : await inspectGlb(bytes).catch((e) => ({ failed: String(e?.message || e) }));
+    T.mark(`variant ${i + 1} check`);
+    const size = bytes.byteLength; // read before sendFile hands the buffer over (it is empty after)
+    const level = { step: LEVELS.length - li, of: LEVELS.length, fits: !target || size <= target };
+    sendFile({ name: args.names[i], bytes, sizeMm, qc, level });
+    files.push({ name: args.names[i], size, sizeMm, qc, level });
+  }
+  progress('완료', 1);
+  return { files, level: li, timings: T.done() };
+}
+
+/**
+ * Everything that does not change between variants, at quality step li: the original read again,
+ * the shape of every option built, the textures that stay from the original compressed.
+ */
+async function buildLevel(io, args, li, progress, T) {
+  const L = LEVELS[li];
+  const { groups, variants, textures } = args;
   progress('원본 다시 읽는 중', 0.02);
   const doc = await io.readBinary(state.bytes);
   await plainFloats(doc);
-  T.mark('read');
+  T.mark(`read (step ${li})`);
   const sources = triangleSources(doc);
-  if (sources.reduce((a, s) => a + s.faceCount, 0) !== state.faceLabels.length) throw new Error('열어 둔 모델과 내용이 달라요. 파일을 다시 열어 주세요.');
+  const total = sources.reduce((a, s) => a + s.faceCount, 0);
+  if (total !== state.faceLabels.length) throw new Error('열어 둔 모델과 내용이 달라요. 파일을 다시 열어 주세요.');
   const analysis = { sources, welded: state.welded, faceLabels: state.faceLabels, axes: args.axes };
   // "original texture, new colour" works on the texture that carries each piece's look (colour,
   // or glow in shaded exports), read before the kept textures are compressed
@@ -486,7 +562,10 @@ async function exportVariants(args, progress, sendFile) {
     return { mat, image: look ? { bytes: look.image, mime: look.mime } : null, slot: !mat ? 'none' : look ? (mat.getBaseColorTexture() ? 'baseColor' : 'emissive') : 'flat' };
   });
   progress('모양 정리 중', 0.06);
-  const ctx = prepareOutput(doc, analysis, args.xf, groups, { ...DEFAULTS, ...args.quality });
+  // the whole model keeps at most L.tris triangles; re-skinned parts (old UVs dropped) a little fewer
+  const keep = args.quality ? args.quality.keepSimplify : Math.min(1, L.tris / Math.max(1, total));
+  const quality = args.quality || { keepSimplify: keep, simplify: Math.min(1, keep * 0.75) };
+  const ctx = prepareOutput(doc, analysis, args.xf, groups, { ...DEFAULTS, ...quality });
   T.mark('rest');
 
   // every option (group × material or original look × size) is built once and reused
@@ -504,7 +583,29 @@ async function exportVariants(args, progress, sendFile) {
   T.mark('geometry');
   progress('원본 텍스처 압축 중', 0.2);
   const texType = args.compat ? 'image/jpeg' : 'image/webp';
-  await compressKeptTextures(doc, (b, m, s) => encodeTexture(b, m, s, { type: texType, quality: args.compat ? 0.9 : 0.85, keepIfFits: true }), args.keptTextureSize || DEFAULTS.keptTextureSize);
+  const legacy = args.keptTextureSize || 0; // older callers: one size for every kept texture
+  const slots = textureSlots(doc);
+  // the original colour texture only seen on the parts no group takes (legs, a small share of the
+  // model, when every group gets a new look in every variant) does not need the full size
+  const restOnly = variants.every((v) => v.every((c) => c.def));
+  const covered = new Set(groups.flatMap((g) => g.parts));
+  let restFaces = 0;
+  for (const l of state.faceLabels) if (!covered.has(l)) restFaces++;
+  const restShare = restFaces / Math.max(1, total);
+  const sizeOf = (kind) => legacy || L[kind];
+  const qOf = (kind) => (args.compat ? Math.max(0.9, L[kind[0] + 'q']) : L[kind[0] + 'q']);
+  for (const t of doc.getRoot().listTextures()) {
+    const kind = slots.get(t) || 'other';
+    let max = sizeOf(kind);
+    if (kind === 'color' && restOnly && restShare < 0.15) max = Math.min(max, 2048);
+    const out = await encodeTexture(t.getImage(), t.getMimeType(), max, { type: texType, quality: qOf(kind), keepIfFits: true });
+    if (!out) { if (t.getMimeType() === 'image/webp') doc.createExtension(EXTTextureWebP).setRequired(true); continue; }
+    if (out.mimeType === 'image/webp') doc.createExtension(EXTTextureWebP).setRequired(true);
+    t.setImage(out.bytes).setMimeType(out.mimeType);
+    const uri = t.getURI();
+    const ext = { 'image/webp': '.webp', 'image/png': '.png', 'image/jpeg': '.jpg' }[out.mimeType] || '';
+    if (uri && ext) t.setURI(uri.replace(/\.(png|jpe?g|webp)$/i, ext));
+  }
   T.mark('kept textures');
 
   // library textures are WebP; compatibility mode turns them into JPEG once
@@ -524,82 +625,76 @@ async function exportVariants(args, progress, sendFile) {
   // another variant's texture
   const recolored = new Map(), stats = new Map();
   const recolor = async (c, si) => {
-    const L = looks[si];
-    if (!L.mat) return null;
+    const Lk = looks[si];
+    if (!Lk.mat) return null;
     const key = `${c.group}|${c.color.hex}|${si}`;
     if (!recolored.has(key)) {
       // measured on the whole group the look comes from (a piece split off for resizing included)
       if (!stats.has(c.group)) { const g = groups.find((x) => x.key === c.group); stats.set(c.group, groupColor({ parts: g.colorFrom || g.parts })); }
-      const st = L.image && (L.slot === 'baseColor' || L.slot === 'emissive') ? stats.get(c.group)?.sources.find((e) => e.source === si) : null;
+      const st = Lk.image && (Lk.slot === 'baseColor' || Lk.slot === 'emissive') ? stats.get(c.group)?.sources.find((e) => e.source === si) : null;
       const target = hexToLinear(c.color.hex);
-      const out = st ? await recolorTexture(L.image.bytes, L.image.mime, target.map((t) => t / Math.max(st.lum, 1e-4)),
-        args.keptTextureSize || DEFAULTS.keptTextureSize, { type: texType, quality: args.compat ? 0.9 : 0.85 }) : null;
+      const out = st ? await recolorTexture(Lk.image.bytes, Lk.image.mime, target.map((t) => t / Math.max(st.lum, 1e-4)),
+        sizeOf('color'), { type: texType, quality: qOf('color') }) : null;
       recolored.set(key, { target, out });
     }
     const { target, out } = recolored.get(key);
-    const alpha = L.mat.getBaseColorFactor()[3];
-    const mat = L.mat.clone().setName(`원래 질감 ${colorLabel(c.color)}`);
+    const alpha = Lk.mat.getBaseColorFactor()[3];
+    const mat = Lk.mat.clone().setName(`원래 질감 ${colorLabel(c.color)}`);
     let tex = null;
     if (!out) {
       mat.setBaseColorTexture(null).setBaseColorFactor([...target, alpha]);
     } else {
       const uri = `recolor_${c.color.hex.replace('#', '')}${si ? `_${si}` : ''}${out.mimeType === 'image/webp' ? '.webp' : '.jpg'}`;
+      if (out.mimeType === 'image/webp') doc.createExtension(EXTTextureWebP).setRequired(true);
       tex = doc.createTexture(uri).setImage(out.bytes).setMimeType(out.mimeType).setURI(uri);
-      if (L.slot === 'baseColor') mat.setBaseColorTexture(tex).setBaseColorFactor([1, 1, 1, alpha]);
+      if (Lk.slot === 'baseColor') mat.setBaseColorTexture(tex).setBaseColorFactor([1, 1, 1, alpha]);
       else mat.setEmissiveTexture(tex).setEmissiveFactor([1, 1, 1]);
     }
-    mat.setExtras({ ...(L.mat.getExtras() || {}), material: 'original', color: c.color.name || c.color.hex, colorHex: c.color.hex });
+    mat.setExtras({ ...(Lk.mat.getExtras() || {}), material: 'original', color: c.color.name || c.color.hex, colorHex: c.color.hex });
     return { mat, tex };
   };
-  const cache = new Map(), files = [];
-  for (let i = 0; i < variants.length; i++) {
-    const combo = variants[i];
-    progress(`변형 ${i + 1}/${variants.length} 만드는 중`, 0.25 + (0.75 * i) / variants.length);
-    const parts = combo.map((c) => built.get(optKey(c)));
-    setVariant(ctx, parts);
-    const made = [], madeTex = [];
-    for (let k = 0; k < combo.length; k++) {
-      const c = combo[k];
-      if (!parts[k]) continue;
-      // kept triangles are shared by the original look and every new colour of this group
-      const own = parts[k].sources || [];
-      if (!c.def) { own.forEach((s, j) => { if (s.material) parts[k].prims[j].setMaterial(s.material); }); continue; }
-      if (c.def.recolor) {
-        if (!c.color?.hex) continue;
-        for (let j = 0; j < own.length; j++) {
-          const r = await recolor(c, sources.indexOf(own[j]));
-          if (!r) continue;
-          parts[k].prims[j].setMaterial(r.mat);
-          made.push(r.mat);
-          if (r.tex) madeTex.push(r.tex);
-        }
-        continue;
+  return { doc, ctx, sources, built, optKey, loadImage, recolor, fine: L.fine && !legacy, cache: new Map() };
+}
+
+/** One variant's file at the step lv was built for: { bytes, sizeMm }. */
+async function encodeOne(io, args, lv, i, avoid, T) {
+  const { doc, ctx, sources, built, optKey, loadImage, recolor, cache } = lv;
+  const combo = args.variants[i];
+  const parts = combo.map((c) => built.get(optKey(c)));
+  setVariant(ctx, parts);
+  const made = [], madeTex = [];
+  for (let k = 0; k < combo.length; k++) {
+    const c = combo[k];
+    if (!parts[k]) continue;
+    // kept triangles are shared by the original look and every new colour of this group
+    const own = parts[k].sources || [];
+    if (!c.def) { own.forEach((s, j) => { if (s.material) parts[k].prims[j].setMaterial(s.material); }); continue; }
+    if (c.def.recolor) {
+      if (!c.color?.hex) continue;
+      for (let j = 0; j < own.length; j++) {
+        const r = await recolor(c, sources.indexOf(own[j]));
+        if (!r) continue;
+        parts[k].prims[j].setMaterial(r.mat);
+        made.push(r.mat);
+        if (r.tex) madeTex.push(r.tex);
       }
-      const { mat, def } = await createMaterial(doc, c.def, c.color, loadImage, cache);
-      applyToGroup(doc, parts[k], mat, def, { rotate: c.rotate || 0 });
-      made.push(mat);
+      continue;
     }
-    T.mark(`variant ${i + 1} materials`);
-    const name = args.names[i];
-    const liftMm = Math.max(0, +args.liftMm || 0);
-    // a note on how it was made; never the byte size of a file saved before from this model (see stampGlb)
-    const bytes = stampGlb(await encodeVariant(io, doc, { meshopt: args.meshopt !== false, liftM: liftMm / 1000 }),
-      { app: args.app || '가구 스킨 스튜디오', savedAt: new Date().toISOString(), floorGapMm: liftMm, file: name }, avoid);
-    avoid.add(bytes.byteLength);
-    T.mark(`variant ${i + 1} encode`);
-    const sizeMm = outerSizeMm(doc, args.axes);
-    // what the file holds, read back from the bytes, and the Khronos validator's verdict
-    progress(`변형 ${i + 1}/${variants.length} 검사 중`, 0.25 + (0.75 * (i + 0.8)) / variants.length);
-    const qc = args.inspect === false ? null : await inspectGlb(bytes).catch((e) => ({ failed: String(e?.message || e) }));
-    T.mark(`variant ${i + 1} check`);
-    const size = bytes.byteLength; // read before sendFile hands the buffer over (it is empty after)
-    sendFile({ name, bytes, sizeMm, qc });
-    files.push({ name, size, sizeMm, qc });
-    made.forEach((m) => m.dispose());
-    madeTex.forEach((t) => t.dispose());
+    const { mat, def } = await createMaterial(doc, c.def, c.color, loadImage, cache);
+    applyToGroup(doc, parts[k], mat, def, { rotate: c.rotate || 0 });
+    made.push(mat);
   }
-  progress('완료', 1);
-  return { files, timings: T.done() };
+  T.mark(`variant ${i + 1} materials`);
+  const name = args.names[i];
+  const liftMm = Math.max(0, +args.liftMm || 0);
+  // a note on how it was made; never the byte size of a file saved before from this model (see stampGlb)
+  const bytes = stampGlb(await encodeVariant(io, doc, { meshopt: args.meshopt !== false, liftM: liftMm / 1000, fineNormals: lv.fine }),
+    { app: args.app || '가구 스킨 스튜디오', savedAt: new Date().toISOString(), floorGapMm: liftMm, file: name }, avoid);
+  T.mark(`variant ${i + 1} encode`);
+  const sizeMm = outerSizeMm(doc, args.axes);
+  made.forEach((m) => m.dispose());
+  madeTex.forEach((t) => t.dispose());
+  return { bytes, sizeMm };
 }
 
 const handlers = {

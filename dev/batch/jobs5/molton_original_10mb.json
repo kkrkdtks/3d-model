@@ -1,0 +1,99 @@
+{
+ "glb": "/tmp/claude-0/-home-user/6e058b2b-6159-554d-88ac-280176209da5/scratchpad/m/orig.glb",
+ "h": 1000,
+ "prefix": "몰튼멀티4인",
+ "liftMm": 10,
+ "sizeTargetMb": 10,
+ "photos": true,
+ "angles": [
+  "front",
+  "quarter"
+ ],
+ "bg": "white",
+ "groups": [
+  {
+   "name": "가죽",
+   "select": {
+    "above": 0.05
+   },
+   "choices": [
+    {
+     "material": "original",
+     "hex": "#ABA79E",
+     "name": "크림화이트"
+    },
+    {
+     "material": "original",
+     "hex": "#9E9487",
+     "name": "크림아이보리"
+    },
+    {
+     "material": "original",
+     "hex": "#A4A29F",
+     "name": "라이트그레이"
+    },
+    {
+     "material": "original",
+     "hex": "#696866",
+     "name": "그레이"
+    },
+    {
+     "material": "original",
+     "hex": "#7A6D5F",
+     "name": "라떼"
+    },
+    {
+     "material": "original",
+     "hex": "#615346",
+     "name": "카멜"
+    },
+    {
+     "material": "original",
+     "hex": "#8E7471",
+     "name": "인디핑크"
+    },
+    {
+     "material": "original",
+     "hex": "#815438",
+     "name": "오렌지"
+    },
+    {
+     "material": "original",
+     "hex": "#433A35",
+     "name": "모카"
+    },
+    {
+     "material": "original",
+     "hex": "#AEB7B5",
+     "name": "라이트민트"
+    },
+    {
+     "material": "original",
+     "hex": "#627379",
+     "name": "미스티블루"
+    },
+    {
+     "material": "original",
+     "hex": "#353742",
+     "name": "네이비"
+    },
+    {
+     "material": "original",
+     "hex": "#7A8065",
+     "name": "카키그린"
+    },
+    {
+     "material": "original",
+     "hex": "#334A3D",
+     "name": "그린"
+    },
+    {
+     "material": "original",
+     "hex": "#2F2F2F",
+     "name": "블랙"
+    }
+   ]
+  }
+ ],
+ "out": "/tmp/claude-0/-home-user/6e058b2b-6159-554d-88ac-280176209da5/scratchpad/m/out10"
+}

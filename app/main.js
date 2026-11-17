@@ -54,6 +54,10 @@ const GROUP_COLORS = ['#e07a2f', '#3b7dd8', '#2e9e6e', '#c9487a', '#8c6bd6', '#c
 const SEL_COLOR = '#ff8a3d';
 // the piece below a height cut, shown while choosing the height
 const CUT_COLOR = '#2f7ee0';
+// file size targets offered on the export panel (MB, 0 = best quality, no limit); any other number can be typed
+const SIZE_TARGETS = [0, 20, 10, 5];
+const validTarget = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 500;
+// geometry detail of the on-screen previews (the saved files follow the size target instead)
 const QUALITY = {
   high: { label: '고품질', simplify: 0.4, keepSimplify: 0.5, note: '아주 가까이 봐도 원본과 같아요. 파일이 조금 커요.' },
   standard: { label: '표준', simplify: 0.25, keepSimplify: 0.35, note: '보통 거리에서는 원본과 구별이 안 돼요. 추천해요.' },
@@ -73,7 +77,7 @@ const THUMB_PX = 480;
 // what to point out about a written file (marketplace rules; 공간무드 itself sets no limit)
 const QC_LIMITS = { triangles: 200000, bytes: 15 * 1048576, texture: 4096 };
 // settings kept on this PC for every model (a model's own saved work may override the first three)
-const PREF_KEYS = ['quality', 'keptTex', 'compat', 'photos', 'photo', 'catalog', 'naming', 'liftMm'];
+const PREF_KEYS = ['sizeTarget', 'compat', 'photos', 'photo', 'catalog', 'naming', 'liftMm'];
 const LIFT_DEFAULT = 10, LIFT_MAX = 100; // mm above the floor in saved files
 
 // ---------- state ----------
@@ -89,7 +93,9 @@ const S = {
   // the body's underside; height cuts made by hand
   segColor: true, segColorUsed: true, hasColor: false, segBase: true, segBaseUsed: true, cuts: [], cut: null,
   selection: new Set(), groups: [], active: null, view: 'material', hover: -1, compare: false,
-  tab: '가죽', quality: 'standard', keptTex: 4096, compat: false, prefix: '', photos: true,
+  tab: '가죽', quality: 'standard', compat: false,
+  // file size target per saved file, MB (0: best quality, no limit); see SIZE_TARGETS
+  sizeTarget: 10, prefix: '', photos: true,
   // product photos: directions, background (transparent PNG or white JPG), size, a small list thumbnail too
   photo: { angles: ['current'], bg: 'transparent', size: '1600x1200', thumb: false }, catalog: true,
   // file names: 'ko' as the groups and materials are called, 'en' letters and digits only (web services, marketplaces)
@@ -246,8 +252,7 @@ function normalizePhoto(p) {
 
 function applyPrefs(p) {
   if (!p || typeof p !== 'object') return;
-  if (QUALITY[p.quality]) S.quality = p.quality;
-  if (p.keptTex === 2048 || p.keptTex === 4096) S.keptTex = p.keptTex;
+  if (validTarget(p.sizeTarget)) S.sizeTarget = p.sizeTarget;
   if (typeof p.compat === 'boolean') S.compat = p.compat;
   if (typeof p.photos === 'boolean') S.photos = p.photos;
   if (p.photo) S.photo = normalizePhoto(p.photo);
@@ -685,7 +690,7 @@ function workSnapshot() {
       activeSize: g.sizes.findIndex((z) => z.id === g.activeSize),
     })),
     active: S.groups.findIndex((g) => g.key === S.active),
-    quality: S.quality, keptTex: S.keptTex, compat: S.compat, prefix: S.prefix,
+    sizeTarget: S.sizeTarget, compat: S.compat, prefix: S.prefix,
   };
 }
 
@@ -730,8 +735,7 @@ function restoreWork(work) {
   }
   if (!S.groups.length) return null;
   S.active = S.groups[work.active]?.key || S.groups[0].key;
-  if (QUALITY[work.quality]) S.quality = work.quality;
-  if (work.keptTex === 2048 || work.keptTex === 4096) S.keptTex = work.keptTex;
+  if (validTarget(work.sizeTarget)) S.sizeTarget = work.sizeTarget;
   S.compat = !!work.compat;
   if (work.prefix) S.prefix = work.prefix;
   const pick = activeGroup()?.pick;
@@ -1321,7 +1325,6 @@ function renderExport() {
   }
   el.classList.remove('dim');
   const { active, count } = variantPlan();
-  const q = QUALITY[S.quality];
   const needH = !S.size.h;
   const off = S.exporting || needH ? 'disabled' : '';
   const r = realSize();
@@ -1332,14 +1335,11 @@ function renderExport() {
     ${needH ? `<p class="warn-text">1번에 실제 크기(${S.sizeLock ? 'W·D·H 중 하나' : '높이 H'})를 넣어야 저장할 수 있어요.</p>`
       : `<p class="note">저장 크기 W ${fmtInt(r.w)} × D ${fmtInt(r.d)} × H ${fmtInt(r.h)}mm${S.groups.some((x) => x.sizes.length) ? ' (크기를 바꾼 부분은 변형마다 그 크기로)' : ''} · 미터 단위, 바닥 가운데 기준${S.liftMm ? ` · 바닥에서 ${fmtInt(S.liftMm)}mm 띄움` : ''}</p>`}
     ${count > 40 ? `<p class="warn-text">파일이 ${count}개예요. 시간이 꽤 걸릴 수 있어요.</p>` : ''}
-    <div class="field"><span class="label">압축</span>
-      <div class="seg flat" role="group">${Object.entries(QUALITY).map(([k, v]) => `<button type="button" data-action="quality" data-q="${k}" class="${k === S.quality ? 'on' : ''}">${v.label}</button>`).join('')}</div>
-      <p class="note">${q.note}</p></div>
-    <div class="field"><span class="label">그대로 두는 부분의 텍스처</span>
-      <div class="seg flat" role="group">
-        <button type="button" data-action="kept-tex" data-size="4096" class="${S.keptTex === 4096 ? 'on' : ''}">4K (선명)</button>
-        <button type="button" data-action="kept-tex" data-size="2048" class="${S.keptTex === 2048 ? 'on' : ''}">2K (가벼움)</button>
-      </div></div>
+    <div class="field"><span class="label">파일 크기 (화질)</span>
+      <div class="seg flat" role="group">${SIZE_TARGETS.map((mb) => `<button type="button" data-action="size-target" data-mb="${mb}" class="${mb === S.sizeTarget && !S.sizeCustom ? 'on' : ''}">${mb ? `${mb}MB 이하` : '최고 화질'}</button>`).join('')}
+        <button type="button" data-action="size-target" data-mb="custom" class="${!SIZE_TARGETS.includes(S.sizeTarget) || S.sizeCustom ? 'on' : ''}">직접 입력</button></div>
+      ${!SIZE_TARGETS.includes(S.sizeTarget) || S.sizeCustom ? `<div class="input-row"><input class="input num short" id="sizeTargetMb" inputmode="decimal" value="${S.sizeTarget || ''}"><span class="unit">MB 이하</span></div>` : ''}
+      <p class="note">${sizeTargetNote()}</p></div>
     <label class="check"><input type="checkbox" id="photos" ${S.photos ? 'checked' : ''}>
       <span>제품 사진도 같이 저장<small>변형마다 ${photoSummary()}. 폴더나 ZIP에는 변형 목록(엑셀용 CSV, 웹 등록용 JSON)${S.catalog ? '과 카탈로그 HTML' : ''}도 같이 들어가요.</small></span></label>
     <div class="field"><label for="liftMm">바닥에서 띄우기</label>
@@ -1381,11 +1381,18 @@ function renderExport() {
   saveWorkSoon();
 }
 
+/** What the chosen size target means, in words under the buttons. */
+function sizeTargetNote() {
+  const orig = S.file ? ` (원본 ${fmtMB(S.file.size)})` : '';
+  if (!S.sizeTarget) return `원본의 삼각형과 텍스처(최대 8K)를 거의 그대로 살려요${orig}. 파일이 크면 공간에 놓을 때 늦게 뜰 수 있어요.`;
+  return `파일마다 ${S.sizeTarget}MB 안에서 가장 좋은 화질로 저장해요${orig}. 숫자가 작을수록 가까이 볼 때 가죽 결·주름이 흐려지고, 클수록 원본에 가까워요.`;
+}
+
 /** One line of the export results: the file, its size and what the check of it found. */
 function fileRow(r) {
   const q = qcReport(r.qc);
   const mark = { ok: '✓', info: '✓', warn: '⚠', error: '✗', none: '✓' }[q.status];
-  return `<div class="file-row ${q.status}"><span class="ok">${mark}</span><span class="fname" title="${esc(r.name)}">${esc(r.name)}</span><span class="fsize">${fmtMB(r.size)}</span>
+  return `<div class="file-row ${q.status}"><span class="ok">${mark}</span><span class="fname" title="${esc(r.name)}">${esc(r.name)}</span><span class="fsize">${fmtMB(r.size)}${r.level ? ` · ${r.level.step === r.level.of ? '최고 화질' : `화질 ${r.level.step}/${r.level.of}`}${r.level.fits ? '' : ' (목표보다 큼)'}` : ''}</span>
     ${q.line ? `<span class="fqc" title="${esc(q.title)}">${esc(q.line)}${q.notes.length ? ` · ⓘ ${esc(q.notes.join(' · '))}` : ''}</span>` : ''}</div>`;
 }
 
@@ -1552,7 +1559,6 @@ async function runExport(kind) {
   const compressOnly = kind === 'compress';
   const { active, count } = variantPlan();
   if (!compressOnly && !count) return;
-  const q = QUALITY[S.quality];
   const base = S.prefix || S.file.base;
   // every combination: one option (a material or the original look, × a size) per group
   const plan = compressOnly ? [[]] : cartesian(active.map((g) => optionsOf(g).map((o) => ({ g, ...o }))));
@@ -1619,12 +1625,12 @@ async function runExport(kind) {
     const savedSizes = await store.getKV(savedSizesKey(S.file), []).catch(() => []);
     const res = await call('export', {
       names, xf: currentXf(), axes: S.axes, app: `가구 스킨 스튜디오 ${VERSION}`, avoidSizes: savedSizes,
-      quality: { simplify: q.simplify, keepSimplify: q.keepSimplify }, keptTextureSize: S.keptTex,
+      targetBytes: Math.round(S.sizeTarget * 1048576),
       meshopt: !S.compat, compat: S.compat, liftMm: S.liftMm, groups, variants: pieceVariants, textures,
     }, {
       onProgress: (p) => busy(p.text, p.frac),
       onFile: (f) => {
-        S.results.push({ name: f.name, size: f.bytes.byteLength, qc: f.qc || null });
+        S.results.push({ name: f.name, size: f.bytes.byteLength, qc: f.qc || null, level: f.level || null });
         made[names.indexOf(f.name)] = { size: f.bytes.byteLength, sizeMm: f.sizeMm, qc: f.qc || null };
         renderExport();
         put(f.name, new Uint8Array(f.bytes));
@@ -2324,13 +2330,11 @@ document.addEventListener('click', async (e) => {
     case 'rotate': if (g) setPatternAngle(g, +t.dataset.rot); break;
     case 'photo-rotate-reset': photo.rotate = 0; renderPhotoFields(); drawPhotoPreview(); break;
     case 'lift-default': setLift(LIFT_DEFAULT); renderExport(); break;
-    case 'quality':
-      S.quality = t.dataset.q;
-      renderExport();
-      savePrefs();
-      for (const x of S.groups) updatePreview(x);
+    case 'size-target':
+      if (t.dataset.mb === 'custom') { S.sizeCustom = true; renderExport(); $('#sizeTargetMb')?.focus(); break; }
+      S.sizeTarget = +t.dataset.mb; S.sizeCustom = false;
+      renderExport(); saveWorkSoon(); savePrefs();
       break;
-    case 'kept-tex': S.keptTex = +t.dataset.size; renderExport(); savePrefs(); break;
     case 'photo-angle': {
       const a = t.dataset.angle, on = S.photo.angles.includes(a);
       if (on && S.photo.angles.length === 1) { toast('각도는 하나 이상 골라야 해요.'); break; }
@@ -2445,6 +2449,12 @@ document.addEventListener('change', async (e) => {
     // locking again: the height stays, W and D follow it
     if (S.sizeLock) { S.sizeAnchor = S.size.h ? 'h' : S.size.w ? 'w' : S.size.d ? 'd' : 'h'; syncLockedSize(); }
     applySize(); renderInfo(); renderMaterial(); renderExport();
+  }
+  else if (t.id === 'sizeTargetMb') {
+    const v = parseFloat(String(t.value).replace(',', '.'));
+    if (Number.isFinite(v) && v > 0) S.sizeTarget = Math.min(500, Math.max(1, Math.round(v * 10) / 10));
+    else toast('1 이상의 숫자(MB)를 넣어 주세요.');
+    renderExport(); saveWorkSoon(); savePrefs();
   }
   else if (t.id === 'compat') { S.compat = t.checked; saveWorkSoon(); savePrefs(); }
   else if (t.id === 'rotNum') { const g = activeGroup(); if (g) t.value = g.rotate; } // show the angle actually used (-180..180)
