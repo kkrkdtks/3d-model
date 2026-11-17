@@ -1335,9 +1335,9 @@ function renderExport() {
     ${needH ? `<p class="warn-text">1번에 실제 크기(${S.sizeLock ? 'W·D·H 중 하나' : '높이 H'})를 넣어야 저장할 수 있어요.</p>`
       : `<p class="note">저장 크기 W ${fmtInt(r.w)} × D ${fmtInt(r.d)} × H ${fmtInt(r.h)}mm${S.groups.some((x) => x.sizes.length) ? ' (크기를 바꾼 부분은 변형마다 그 크기로)' : ''} · 미터 단위, 바닥 가운데 기준${S.liftMm ? ` · 바닥에서 ${fmtInt(S.liftMm)}mm 띄움` : ''}</p>`}
     ${count > 40 ? `<p class="warn-text">파일이 ${count}개예요. 시간이 꽤 걸릴 수 있어요.</p>` : ''}
-    <div class="field"><span class="label">파일 크기 (화질)</span>
-      <div class="seg flat" role="group">${SIZE_TARGETS.map((mb) => `<button type="button" data-action="size-target" data-mb="${mb}" class="${mb === S.sizeTarget && !S.sizeCustom ? 'on' : ''}">${mb ? `${mb}MB 이하` : '최고 화질'}</button>`).join('')}
-        <button type="button" data-action="size-target" data-mb="custom" class="${!SIZE_TARGETS.includes(S.sizeTarget) || S.sizeCustom ? 'on' : ''}">직접 입력</button></div>
+    <div class="field"><span class="label">파일 크기 (파일 하나의 최대 용량)</span>
+      <div class="seg flat" role="group">${SIZE_TARGETS.map((mb) => `<button type="button" data-action="size-target" data-mb="${mb}" class="${mb === S.sizeTarget && !S.sizeCustom ? 'on' : ''}">${mb ? `${mb}MB` : '최고 화질'}</button>`).join('')}
+        <button type="button" data-action="size-target" data-mb="custom" class="${!SIZE_TARGETS.includes(S.sizeTarget) || S.sizeCustom ? 'on' : ''}">직접</button></div>
       ${!SIZE_TARGETS.includes(S.sizeTarget) || S.sizeCustom ? `<div class="input-row"><input class="input num short" id="sizeTargetMb" inputmode="decimal" value="${S.sizeTarget || ''}"><span class="unit">MB 이하</span></div>` : ''}
       <p class="note">${sizeTargetNote()}</p></div>
     <label class="check"><input type="checkbox" id="photos" ${S.photos ? 'checked' : ''}>

@@ -19,81 +19,97 @@
    "choices": [
     {
      "material": "original",
-     "hex": "#ABA79E",
-     "name": "크림화이트"
+     "hex": "#85817A",
+     "name": "크림화이트",
+     "chart": "#ABA79E"
     },
     {
      "material": "original",
-     "hex": "#9E9487",
-     "name": "크림아이보리"
+     "hex": "#7B7267",
+     "name": "크림아이보리",
+     "chart": "#9E9487"
     },
     {
      "material": "original",
-     "hex": "#A4A29F",
-     "name": "라이트그레이"
+     "hex": "#7E7E7B",
+     "name": "라이트그레이",
+     "chart": "#A4A29F"
     },
     {
      "material": "original",
-     "hex": "#696866",
-     "name": "그레이"
+     "hex": "#4E4D4B",
+     "name": "그레이",
+     "chart": "#696866"
     },
     {
      "material": "original",
-     "hex": "#7A6D5F",
-     "name": "라떼"
+     "hex": "#5C5044",
+     "name": "라떼",
+     "chart": "#7A6D5F"
     },
     {
      "material": "original",
-     "hex": "#615346",
-     "name": "카멜"
+     "hex": "#473A2F",
+     "name": "카멜",
+     "chart": "#615346"
     },
     {
      "material": "original",
-     "hex": "#8E7471",
-     "name": "인디핑크"
+     "hex": "#6D5754",
+     "name": "인디핑크",
+     "chart": "#8E7471"
     },
     {
      "material": "original",
-     "hex": "#815438",
-     "name": "오렌지"
+     "hex": "#623B22",
+     "name": "오렌지",
+     "chart": "#815438"
     },
     {
      "material": "original",
-     "hex": "#433A35",
-     "name": "모카"
+     "hex": "#2D241F",
+     "name": "모카",
+     "chart": "#433A35"
     },
     {
      "material": "original",
-     "hex": "#AEB7B5",
-     "name": "라이트민트"
+     "hex": "#8A9290",
+     "name": "라이트민트",
+     "chart": "#AEB7B5"
     },
     {
      "material": "original",
-     "hex": "#627379",
-     "name": "미스티블루"
+     "hex": "#48565B",
+     "name": "미스티블루",
+     "chart": "#627379"
     },
     {
      "material": "original",
-     "hex": "#353742",
-     "name": "네이비"
+     "hex": "#20222B",
+     "name": "네이비",
+     "chart": "#353742"
     },
     {
      "material": "original",
-     "hex": "#7A8065",
-     "name": "카키그린"
+     "hex": "#5B604A",
+     "name": "카키그린",
+     "chart": "#7A8065"
     },
     {
      "material": "original",
-     "hex": "#334A3D",
-     "name": "그린"
+     "hex": "#1E3327",
+     "name": "그린",
+     "chart": "#334A3D"
     },
     {
      "material": "original",
-     "hex": "#2F2F2F",
-     "name": "블랙"
+     "hex": "#1B1B1B",
+     "name": "블랙",
+     "chart": "#2F2F2F"
     }
    ]
   }
  ],
- "out": "/tmp/claude-0/-home-user/6e058b2b-6159-554d-88ac-280176209da5/scratchpad/m/out0"
+ "out": "/tmp/claude-0/-home-user/6e058b2b-6159-554d-88ac-280176209da5/scratchpad/m/out0",
+ "note": "hex = Jakomo chart hex (chart) corrected so the recoloured original texture renders on the seat like the approved Lecce renders of 2026-11-10 (recolour came out ~1.3x brighter); file names carry the chart hex"
 }
