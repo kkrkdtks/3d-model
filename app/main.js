@@ -1434,7 +1434,7 @@ function sizeChoices() {
 function sizeTargetNote(best) {
   const orig = S.file ? ` (원본 ${fmtMB(S.file.size)})` : '';
   const about = `지금 고른 재질로 최고 화질이면 파일 하나가 약 ${fmtMB(best)}예요`;
-  if (S.sizeTarget < 0) return `삼각형·텍스처를 원본 그대로 두고 압축하지 않아요${orig}. 색을 바꾼 텍스처만 원본 크기 JPG로 저장해요. 파일이 원본만큼 또는 더 커서(수십 MB) 공간에 놓을 때 늦게 뜰 수 있어요.`;
+  if (S.sizeTarget < 0) return `삼각형을 하나도 줄이지 않고, 모양 압축(meshopt)도 하지 않고, 남는 원본 텍스처도 그대로 둬요${orig}. 색만 바꾼 텍스처는 원본 크기 JPG로 저장해요. 단, 모든 부분에 새 재질(가죽·메탈 등)을 입히면 원본의 큰 텍스처(보통 8K, 수십 MB)는 더 이상 쓰이지 않아 파일에서 빠지고, 새 재질의 반복 텍스처만 들어가요. 그래서 압축하지 않아도 원본보다 훨씬 작아질 수 있어요.`;
   if (S.sizeTarget > 0 && S.sizeTarget * 1048576 >= best) return `${about}. ${S.sizeTarget}MB면 최고 화질로 저장될 거예요.`;
   if (!S.sizeTarget) return `${about}${orig}. 더 작게 하려면 옆의 MB를 고르세요. 원본의 삼각형과 텍스처(최대 8K)를 거의 그대로 살려요.`;
   return `파일마다 ${S.sizeTarget}MB 안에서 가장 좋은 화질로 저장해요${orig}. 숫자가 작을수록 가까이 볼 때 가죽 결·주름이 흐려지고, 클수록 원본에 가까워요.`;
@@ -1711,6 +1711,9 @@ async function runExport(kind) {
     const bad = checked.filter((r) => qcReport(r.qc).errors > 0).length;
     const verdict = !checked.length ? '' : bad ? ` · ⚠ 검사 오류 ${bad}개 파일` : ` · Khronos 검사 ${checked.length}개 모두 통과`;
     S.resultNote = `${S.results.length}개 · 모두 ${fmtMB(total)} (원본 ${fmtMB(S.file.size)}) · ${secs}초${extras ? ` · ${extras}도 함께` : ''}${verdict} · ${where}`;
+    // "no compression" files much smaller than the original: the original's textures were replaced, not compressed
+    if (S.sizeTarget < 0 && S.results.length && total / S.results.length < S.file.size * 0.5)
+      S.resultNote += ' · 압축은 하지 않았어요. 원본보다 작은 건 원본의 큰 텍스처를 쓰던 부분에 모두 새 재질을 입혀서, 그 텍스처가 파일에서 빠졌기 때문이에요(삼각형 수는 원본 그대로).';
     toast(where);
   } catch (e) {
     console.error(e);
